@@ -51,7 +51,7 @@
 
   function renderCanvas(d) {
     const parts = [];
-    parts.push(`<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="0.9" class="grid-dot"/></pattern></defs><rect width="3000" height="1200" fill="url(#grid)"/>`);
+    parts.push(`<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="0.9" class="grid-dot"/></pattern></defs><rect width="3000" height="1900" fill="url(#grid)"/>`);
 
     // Connection 線
     state.connections.forEach((c) => {
@@ -93,7 +93,14 @@
 
     // Auto Elbow 預覽
     const pr = state.proposals.find((p) => p.id === state.previewId);
-    if (pr && pr.type === "AUTO_REDUCER") {
+    if (pr && pr.type === "AUTO_TEE") {
+      const G = pr.geometry;
+      const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+      parts.push(`<g pointer-events="none">${ghost}
+        <line x1="${G.pS[0]}" y1="${G.pS[1]}" x2="${G.J[0]}" y2="${G.J[1]}" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 8"/>
+        <circle cx="${G.J[0]}" cy="${G.J[1]}" r="12" fill="#ef4444"/>
+        <text x="${G.J[0] + 18}" y="${G.J[1] - 14}" font-size="26" font-weight="700" fill="#ef4444">J・Tee 長 ${G.L}mm・主線拆成 ${pr.info.lenL.toFixed(0)} + ${pr.info.lenR.toFixed(0)}</text></g>`);
+    } else if (pr && pr.type === "AUTO_REDUCER") {
       const G = pr.geometry;
       const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
       parts.push(`<g pointer-events="none">${ghost}
@@ -156,18 +163,42 @@
     $("conn-list").innerHTML = html + "</div>";
   }
 
+  /** 每種 proposal 的顯示文字 */
+  function describe(p) {
+    const i = p.info;
+    if (p.type === "AUTO_TEE") {
+      return {
+        title: `三通：${p.sourceConnectors[0]} → 主線 ${p.mainId}`,
+        line1: `W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ Tee 長 ${p.geometry.L}mm ｜ 分支到主線 t=${p.geometry.t.toFixed(0)}mm`,
+        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR}（拆成兩段） ・ ${esc(i.trayBranch)} ${i.oldLenBranch}→${i.newLenBranch} ・ +1 tee ・ +3 connections`,
+      };
+    }
+    if (p.type === "AUTO_REDUCER") {
+      return {
+        title: `變徑：${p.sourceConnectors[0]} ↔ ${p.sourceConnectors[1]}`,
+        line1: `W${i.widthStart}→W${i.widthEnd} ${esc(i.system)} FFL+${i.elevation} ｜ 間距 ${p.geometry.gap.toFixed(0)}mm ｜ 變徑長 ${CT.REDUCER_LEN}mm`,
+        line2: `${esc(i.trayX)} ${i.oldLenX}→${i.newLenX} ・ ${esc(i.trayY)} ${i.oldLenY}→${i.newLenY} ・ +1 reducer ・ +2 connections`,
+      };
+    }
+    const g = p.geometry;
+    return {
+      title: `彎頭 ${g.angle}°：${p.sourceConnectors[0]} ↔ ${p.sourceConnectors[1]}`,
+      line1: `W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ 夾角 ${g.angle}° ｜ 需退縮 ${g.setback.toFixed(1)}mm（Rc=${g.Rc}） ｜ t1=${g.t1.toFixed(0)} t2=${g.t2.toFixed(0)}`,
+      line2: `${esc(i.trayX)} ${i.oldLenX}→${i.newLenX} ・ ${esc(i.trayY)} ${i.oldLenY}→${i.newLenY} ・ +1 elbow${g.angle} ・ +2 connections`,
+    };
+  }
+
   function renderProposals() {
-    $("proposals").innerHTML = state.proposals.map((p) => `
+    $("proposals").innerHTML = state.proposals.map((p) => {
+      const d = describe(p);
+      return `
       <div class="proposal ${state.previewId === p.id ? "sel" : ""}">
-        <div><b>${p.type === "AUTO_REDUCER" ? "變徑" : `彎頭 ${p.geometry.angle}°`}：${esc(p.sourceConnectors[0])} ↔ ${esc(p.sourceConnectors[1])}</b>
-          <div>${p.type === "AUTO_REDUCER"
-            ? `W${p.info.widthStart}→W${p.info.widthEnd} ${esc(p.info.system)} FFL+${p.info.elevation} ｜ 間距 ${p.geometry.gap.toFixed(0)}mm ｜ 變徑長 ${CT.REDUCER_LEN}mm`
-            : `W${p.info.width} ${esc(p.info.system)} FFL+${p.info.elevation} ｜ 夾角 ${p.geometry.angle}° ｜ 需退縮 ${p.geometry.setback.toFixed(1)}mm（Rc=${p.geometry.Rc}） ｜ t1=${p.geometry.t1.toFixed(0)} t2=${p.geometry.t2.toFixed(0)}`}</div>
-          <div class="sub">${esc(p.info.trayX)} ${p.info.oldLenX}→${p.info.newLenX} ・ ${esc(p.info.trayY)} ${p.info.oldLenY}→${p.info.newLenY} ・ +1 ${p.type === "AUTO_REDUCER" ? "reducer" : `elbow${p.geometry.angle}`} ・ +2 connections</div></div>
+        <div><b>${esc(d.title)}</b><div>${d.line1}</div><div class="sub">${d.line2}</div></div>
         <div class="row"><button class="btn small" data-act="preview" data-id="${esc(p.id)}">預覽</button>
           <button class="btn small dark" data-act="apply" data-id="${esc(p.id)}">套用</button>
           <button class="btn small" data-act="ignore" data-id="${esc(p.id)}">忽略</button></div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
     const t = $("toast");
     t.hidden = !state.toast;
     if (state.toast) { t.textContent = state.toast.text; t.className = "toast" + (state.toast.error ? " err" : ""); }
@@ -272,11 +303,14 @@
     setState({ connections: conns, pending: null, proposals: [], previewId: null });
   }
   function detect(kind) {
-    const isRed = kind === "reducer";
     const angle = kind === "elbow45" ? 45 : 90;
-    const { proposals, notes } = isRed ? CT.detectAutoReducers(state.blocks, state.connections) : CT.detectAutoElbows(state.blocks, state.connections, angle);
+    const detectors = {
+      reducer: () => CT.detectAutoReducers(state.blocks, state.connections),
+      tee: () => CT.detectAutoTees(state.blocks, state.connections),
+    };
+    const { proposals, notes } = (detectors[kind] || (() => CT.detectAutoElbows(state.blocks, state.connections, angle)))();
     setState({ proposals, previewId: proposals[0] ? proposals[0].id : null });
-    const what = isRed ? "變徑" : `${angle}° 彎頭`;
+    const what = kind === "reducer" ? "變徑" : kind === "tee" ? "三通" : `${angle}° 彎頭`;
     if (proposals.length) toast(`偵測到 ${proposals.length} 個可插入${what}的位置`);
     else toast(`未偵測到可插入${what}的位置` + (notes.length ? "：" + notes[0] : ""), true);
   }
@@ -285,8 +319,8 @@
     if (!pr) return;
     // 以目前狀態重新 build + validate；成功才一次 setState（blocks + connections 同時更新）
     const [ka, kb] = pr.sourceConnectors;
-    const r = pr.type === "AUTO_REDUCER"
-      ? CT.commitAutoReducer(state.blocks, state.connections, ka, kb)
+    const r = pr.type === "AUTO_TEE" ? CT.commitAutoTee(state.blocks, state.connections, ka, pr.mainId)
+      : pr.type === "AUTO_REDUCER" ? CT.commitAutoReducer(state.blocks, state.connections, ka, kb)
       : CT.commitAutoElbow(state.blocks, state.connections, ka, kb, pr.geometry.angle);
     if (!r.ok) {
       setState({ proposals: state.proposals.filter((p) => p.id !== id), previewId: null });
@@ -295,7 +329,9 @@
     const i = r.proposal.info;
     const el = r.proposal.addBlocks[0];
     setState({ blocks: r.blocks, connections: r.connections, proposals: [], previewId: null, selectedId: el.id });
-    toast(`已插入 ${el.trayId}；${i.trayX} ${i.oldLenX}→${i.newLenX}，${i.trayY} ${i.oldLenY}→${i.newLenY}`);
+    toast(pr.type === "AUTO_TEE"
+      ? `已插入 ${el.trayId}；主線 ${i.trayMain} 拆成 ${i.lenL} + ${i.lenR}，${i.trayBranch} ${i.oldLenBranch}→${i.newLenBranch}`
+      : `已插入 ${el.trayId}；${i.trayX} ${i.oldLenX}→${i.newLenX}，${i.trayY} ${i.oldLenY}→${i.newLenY}`);
   }
   function download(text, name, type) {
     const url = URL.createObjectURL(new Blob([text], { type }));
@@ -367,6 +403,7 @@
   $("btn-detect").addEventListener("click", () => detect("elbow90"));
   $("btn-detect-45").addEventListener("click", () => detect("elbow45"));
   $("btn-detect-reducer").addEventListener("click", () => detect("reducer"));
+  $("btn-detect-tee").addEventListener("click", () => detect("tee"));
   $("btn-dxf").addEventListener("click", () => download(CT.toDXF(state.blocks, state.connections), "cable-tray-sketch-AC1014.dxf", "application/dxf"));
   $("btn-csv").addEventListener("click", () => download(CT.toCSV(state.blocks), "bom.csv", "text/csv;charset=utf-8"));
   $("btn-json").addEventListener("click", () => download(CT.toJSON(state.blocks, state.connections, CT.buildGraph(state.blocks, state.connections)), "graph.json", "application/json"));

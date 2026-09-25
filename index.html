@@ -12,8 +12,8 @@
   <header class="topbar">
     <div class="logo">CT</div>
     <div>
-      <div class="title">Cable Tray 配置設計器 <span class="ver">v5.1</span></div>
-      <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90°/45° / Auto Reducer（提案→驗證→提交）• 2D 草圖 DXF</div>
+      <div class="title">Cable Tray 配置設計器 <span class="ver">v5.2</span></div>
+      <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90°/45° / Auto Reducer / Auto Tee（提案→驗證→提交）• 2D 草圖 DXF</div>
     </div>
     <div class="stats" id="stats"></div>
     <div class="tools">
@@ -46,7 +46,7 @@
 
       <section class="canvas-col">
         <div class="canvas-wrap">
-          <svg id="canvas" viewBox="0 0 3000 1200" preserveAspectRatio="xMidYMid meet"></svg>
+          <svg id="canvas" viewBox="0 0 3000 1900" preserveAspectRatio="xMidYMid meet"></svg>
           <div class="pending" id="pending" hidden></div>
         </div>
 
@@ -54,8 +54,9 @@
           <div class="row">
             <button class="btn dark" id="btn-detect">🔍 偵測 90° 彎頭</button>
             <button class="btn dark" id="btn-detect-45">🔍 偵測 45° 彎頭</button>
+            <button class="btn dark" id="btn-detect-tee">🔍 偵測 三通</button>
             <button class="btn dark" id="btn-detect-reducer">🔍 偵測 變徑</button>
-            <span class="hint">Straight↔Straight・free connector・同 System/FFL/Width・夾角 90° 或 45°・退縮量 T = Rc·tan(θ/2)，Rc = 內半徑 + 寬/2。驗證失敗則狀態完全不變。Auto Reducer：兩條同軸相對、寬度不同的直線 → 插入變徑。Tee 自動生成：後續版本。</span>
+            <span class="hint">Straight↔Straight・free connector・同 System/FFL/Width・夾角 90° 或 45°・退縮量 T = Rc·tan(θ/2)，Rc = 內半徑 + 寬/2。驗證失敗則狀態完全不變。Auto Reducer：兩條同軸相對、寬度不同的直線 → 插入變徑。Auto Tee：free 分支端點垂直朝向另一條直線的中段 → 主線拆成兩段並插入三通。</span>
           </div>
           <div id="toast" class="toast" hidden></div>
           <div id="proposals"></div>
@@ -79,6 +80,7 @@
   <script src="js/transaction.js"></script>
   <script src="js/autoelbow.js"></script>
   <script src="js/autoreducer.js"></script>
+  <script src="js/autotee.js"></script>
   <script src="js/export.js"></script>
   <script src="js/sample.js"></script>
   <script src="js/app.js"></script>

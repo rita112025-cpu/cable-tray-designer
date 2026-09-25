@@ -1,7 +1,7 @@
 // 執行：node test/core.test.js （或 npm test）
 const assert = require("node:assert/strict");
 const path = require("node:path");
-["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
+["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
 const CT = globalThis.CT;
 
 let passed = 0;
@@ -358,6 +358,200 @@ test("45° 與 90° 彎頭可在同一專案接續套用", () => {
   const e90 = CT.commitAutoElbow(CT.sampleBlocks(), CT.sampleConnections(), "B8:B", "B9:B");
   assert.ok(e90.ok, e90.reason);
   assert.ok(e90.blocks.some((b) => b.type === "elbow90" && b.id.startsWith("EL-A")));
+});
+
+console.log("Transaction contract (v5.2a：removeBlocks / removeConnections / replaces)");
+// Z ──c1── M(0..2000)。手動把 M 拆成 M1 + M2，Z 的連接改接到 M1:A
+const txM = () => B("straight", { id: "M", x: 0, y: 0, length: 2000 });
+const txZ = () => B("straight", { id: "Z", x: -1000, y: 0, length: 1000 });
+const txBase = () => ({ blocks: [txM(), txZ()], conns: [{ id: "c1", from: "Z:B", to: "M:A" }] });
+const txSplit = (over = {}) => ({
+  id: "split", type: "TEST_SPLIT", sourceConnectors: [],
+  removeBlocks: ["M"], removeConnections: ["c1"], updateBlocks: [],
+  addBlocks: [
+    B("straight", { id: "M1", x: 0, y: 0, length: 1000 }),
+    B("straight", { id: "M2", x: 1000, y: 0, length: 1000 }),
+  ],
+  addConnections: [
+    { from: "M1:B", to: "M2:A" },
+    { from: "Z:B", to: "M1:A", replaces: { id: "c1", oldKey: "M:A", newKey: "M1:A" } },
+  ],
+  ...over,
+});
+test("split proposal 通過驗證：M 被移除、M1/M2 加入、既有連接被替換", () => {
+  const { blocks, conns } = txBase();
+  const v = CT.checkProposal(blocks, conns, txSplit());
+  assert.equal(v.errs.length, 0, v.errs.join(";"));
+  assert.ok(!v.blocks.some((b) => b.id === "M")); assert.ok(v.blocks.some((b) => b.id === "M1") && v.blocks.some((b) => b.id === "M2"));
+  assert.equal(v.connections.length, 2);
+  assert.ok(!v.connections.some((c) => c.id === "c1"));
+});
+test("simulateProposal 固定順序：不修改輸入", () => {
+  const { blocks, conns } = txBase();
+  const snap = JSON.stringify([blocks, conns]);
+  CT.simulateProposal(blocks, conns, txSplit());
+  assert.equal(JSON.stringify([blocks, conns]), snap);
+});
+test("移除元件卻沒處理連接 → dangling connection 被擋", () => {
+  const { blocks, conns } = txBase();
+  const v = CT.checkProposal(blocks, conns, txSplit({ removeConnections: [], addConnections: [{ from: "M1:B", to: "M2:A" }] }));
+  assert.ok(v.errs.some((e) => e.includes("不存在")));
+});
+test("移除連接但沒有替換 → 被擋", () => {
+  const { blocks, conns } = txBase();
+  const v = CT.checkProposal(blocks, conns, txSplit({ addConnections: [{ from: "M1:B", to: "M2:A" }] }));
+  assert.ok(v.errs.some((e) => e.includes("沒有替換")));
+});
+test("替換後端點座標改變 → 被擋", () => {
+  const { blocks, conns } = txBase();
+  const bad = txSplit({ addBlocks: [B("straight", { id: "M1", x: 40, y: 0, length: 960 }), B("straight", { id: "M2", x: 1000, y: 0, length: 1000 })] });
+  assert.ok(CT.checkProposal(blocks, conns, bad).errs.some((e) => e.includes("座標改變")));
+});
+test("要移除不存在的元件 / 連接 → 被擋", () => {
+  const { blocks, conns } = txBase();
+  assert.ok(CT.checkProposal(blocks, conns, txSplit({ removeBlocks: ["M", "NOPE"] })).errs.some((e) => e.includes("NOPE")));
+  assert.ok(CT.checkProposal(blocks, conns, txSplit({ removeConnections: ["c1", "cX"] })).errs.some((e) => e.includes("cX")));
+});
+test("替換的連接不可比原本差；未動的連接維持原狀", () => {
+  const { blocks, conns } = txBase();
+  const worse = txSplit({ addBlocks: [B("straight", { id: "M1", x: 0, y: 0, length: 1000, system: "POWER" }), B("straight", { id: "M2", x: 1000, y: 0, length: 1000 })] });
+  assert.ok(CT.checkProposal(blocks, conns, worse).errs.some((e) => e.includes("validator")));
+});
+test("純新增的連接必須 Valid（拆分後 M1:B↔M2:A 寬度不同 → 被擋）", () => {
+  const { blocks, conns } = txBase();
+  const bad = txSplit({ addBlocks: [B("straight", { id: "M1", x: 0, y: 0, length: 1000 }), B("straight", { id: "M2", x: 1000, y: 0, length: 1000, width: 200 })] });
+  assert.ok(CT.checkProposal(blocks, conns, bad).errs.some((e) => e.includes("validator")));
+});
+
+console.log("Auto Tee (v5.2)");
+// Main：W300、x 0→2000（y=0）；Branch：垂直，端點朝向主線（交點 J=(1000,0)，t=400）
+const TM = (o) => B("straight", { id: "M", trayId: "MAIN", width: 300, x: 0, y: 0, length: 2000, ...o });
+const TS = (o) => B("straight", { id: "S", trayId: "BR", width: 300, x: 1000, y: -1200, rotation: 90, length: 800, ...o });
+const TSbelow = (o) => TS({ y: 1200, rotation: 270, ...o });
+const rot4 = (bl, rot) => bl.map((b) => {
+  const w = CT.toWorld({ x: 0, y: 0, rotation: rot }, b.x, b.y);
+  return CT.refresh({ ...b, x: w.x, y: w.y, rotation: (b.rotation + rot) % 360 });
+});
+const tee = (bl, cn = []) => CT.commitAutoTee(bl, cn, "S:B", "M");
+const allCoincide = (r) => r.connections.forEach((c) => {
+  const a = CT.endpointOf(r.blocks, c.from), b = CT.endpointOf(r.blocks, c.to);
+  if (!c.id.startsWith("TE-A")) return;
+  near(a.k.worldX, b.k.worldX, 0.02); near(a.k.worldY, b.k.worldY, 0.02);
+});
+
+test("T 字：Main 被拆成 Main-1 / Main-2 + Tee，Branch 修到 Tee:C", () => {
+  const r = tee([TM(), TS()]);
+  assert.ok(r.ok, r.reason);
+  assert.ok(!r.blocks.some((b) => b.id === "M"));
+  assert.deepEqual(r.blocks.map((b) => b.type).sort(), ["straight", "straight", "straight", "tee"]);
+  assert.equal(r.proposal.type, "AUTO_TEE");
+  assert.equal(r.connections.length, 3);
+});
+test("長度：Tee 600；Main-L = 1000−300 = 700，Main-R = 700（總長 700+600+700=2000）；Branch 800→900", () => {
+  const r = tee([TM(), TS()]);
+  const L = r.blocks.find((b) => b.id.startsWith("TL-A")), R = r.blocks.find((b) => b.id.startsWith("TR-A")), T = r.blocks.find((b) => b.type === "tee");
+  near(L.length, 700); near(R.length, 700); near(T.length, 600);
+  near(L.length + T.length + R.length, 2000);
+  near(r.blocks.find((b) => b.id === "S").length, 900);
+});
+test("Tee A/B/C 與三條 Straight 端點精確重合；Tee C 朝向 Branch", () => {
+  const r = tee([TM(), TS()]);
+  allCoincide(r);
+  const T = r.blocks.find((b) => b.type === "tee");
+  const C = T.connectors.find((k) => k.id === "C");
+  near(C.worldX, 1000); near(C.worldY, -300); near(C.worldDir, 270);
+});
+test("分支在上 / 下、整體旋轉 0/90/180/270：皆成功、端點重合、三條連接皆 Valid", () => {
+  for (const mk of [TS, TSbelow]) {
+    for (const rot of [0, 90, 180, 270]) {
+      const r = tee(rot4([TM(), mk()], rot));
+      assert.ok(r.ok, `rot=${rot}: ${r.reason}`);
+      allCoincide(r);
+      assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"), `valid rot=${rot}`);
+    }
+  }
+});
+test("Main 兩端本來就有連接（設備────Main────設備）：座標與連接保持，替換後仍 Valid", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000 });
+  const E2 = B("straight", { id: "E2", x: 2000, y: 0, length: 1000 });
+  const bl = [TM(), TS(), E1, E2];
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }, { id: "c2", from: "M:B", to: "E2:A" }];
+  const r = tee(bl, cn);
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.connections.length, 5);
+  const L = r.blocks.find((b) => b.id.startsWith("TL-A")), R = r.blocks.find((b) => b.id.startsWith("TR-A"));
+  near(L.connectors[0].worldX, 0); near(R.connectors[1].worldX, 2000);
+  assert.ok(r.connections.some((c) => (c.from === "E1:B" && c.to === `${L.id}:A`) || (c.to === "E1:B" && c.from === `${L.id}:A`)));
+  assert.ok(r.connections.some((c) => (c.from === "E2:A" && c.to === `${R.id}:B`) || (c.to === "E2:A" && c.from === `${R.id}:B`)));
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  // 整條路徑仍連通：E1 → … → E2 是同一個子網路
+  assert.equal(CT.buildGraph(r.blocks, r.connections).subgraphCount, 1);
+});
+test("Main 端點連接原本就有 Warning（System 不同的設備）：替換後不變差即可通過", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000, system: "POWER" });
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }];
+  const r = tee([TM(), TS(), E1], cn);
+  assert.ok(r.ok, r.reason);
+});
+test("Branch occupied → 失敗", () => {
+  const Z = B("straight", { id: "Z", x: 1000, y: -400, length: 300, rotation: 270 });
+  const bl = [TM(), TS(), Z];
+  assert.equal(tee(bl, [{ id: "c", from: "S:B", to: "Z:A" }]).ok, false);
+});
+test("交點落在 Main 之外 / 太靠近端點 → 失敗且不修改輸入", () => {
+  const outside = [TM(), TS({ x: 2500 })];
+  const near1 = [TM(), TS({ x: 250 })]; // Main-L = 250−300 < 0
+  const near2 = [TM(), TS({ x: 380 })]; // Main-L = 80 < 100
+  [outside, near1, near2].forEach((bl) => {
+    const snap = JSON.stringify([bl, []]);
+    assert.equal(tee(bl).ok, false);
+    assert.equal(JSON.stringify([bl, []]), snap);
+  });
+  assert.equal(tee([TM(), TS({ x: 400 })]).ok, true); // 邊界：Main-L = 100 剛好可以
+});
+test("Branch 朝向遠離主線 / 距離過遠 / 調整後長度不足 → 失敗", () => {
+  assert.equal(tee([TM(), TS({ y: -1200, rotation: 270, x: 1000 })]).ok, false); // 端點朝上遠離
+  assert.equal(tee([TM(), TS({ y: -4000 })]).ok, false); // t 太大
+  assert.equal(tee([TM(), TS({ y: -300, length: 200 })]).ok, false); // tip 在 y=-100，t=100 → 新長度 200+100−300 < 100
+});
+test("System / FFL / Width 不一致、非 90° → 失敗", () => {
+  assert.equal(tee([TM(), TS({ system: "POWER" })]).ok, false);
+  assert.equal(tee([TM(), TS({ elevation: 3200 })]).ok, false);
+  assert.equal(tee([TM(), TS({ width: 200 })]).ok, false);
+  assert.equal(tee([TM(), TS({ rotation: 80 })]).ok, false);
+  assert.equal(tee([TM(), TS({ rotation: 45 })]).ok, false);
+});
+test("Loop 不憑空增加、subgraph 不惡化", () => {
+  const bl = [TM(), TS()];
+  const g1 = CT.buildGraph(bl, []);
+  const r = tee(bl);
+  const g2 = CT.buildGraph(r.blocks, r.connections);
+  assert.equal(g2.loopCount, 0);
+  assert.ok(g2.subgraphCount <= g1.subgraphCount);
+  assert.equal(g2.subgraphCount, 1);
+});
+test("第二次執行不會再插 Tee", () => {
+  const r = tee([TM(), TS()]);
+  assert.equal(CT.detectAutoTees(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(tee(r.blocks, r.connections).ok, false);
+});
+test("交易式：失敗時輸入完全不變；成功時輸入也不被改動", () => {
+  const ok = [TM(), TS()]; const snap = JSON.stringify([ok, []]);
+  assert.equal(tee(ok).ok, true);
+  assert.equal(JSON.stringify([ok, []]), snap);
+});
+test("偵測：只找 free 分支端點；Elbow / Reducer 偵測不受影響", () => {
+  const bl = [TM(), TS()];
+  const found = CT.detectAutoTees(bl, []).proposals;
+  assert.equal(found.length, 1); assert.equal(found[0].sourceConnectors[0], "S:B");
+  assert.equal(CT.detectAutoElbows(bl, [], 90).proposals.length, 0);
+  assert.equal(CT.detectAutoReducers(bl, []).proposals.length, 0);
+});
+test("範例資料：偵測到 1 組 Tee；Elbow 與 Reducer 各 1 組不變", () => {
+  const bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  assert.equal(CT.detectAutoTees(bl, cn).proposals.length, 1);
+  assert.equal(CT.detectAutoElbows(bl, cn).proposals.length, 1);
+  assert.equal(CT.detectAutoReducers(bl, cn).proposals.length, 1);
 });
 
 console.log("Export");

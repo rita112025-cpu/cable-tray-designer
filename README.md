@@ -26,6 +26,8 @@
 | v4 | **Auto Elbow 90°**：偵測 → 提案 → 驗證 → 一次提交（失敗則狀態完全不變） |
 | **v5.0** | **Auto Reducer**：兩條同軸相對、寬度不同的直線 → 自動插入變徑（W300→W200） |
 | **v5.1** | **Auto Elbow 45°**：切線退縮量 `T = Rc·tan(θ/2)`，與 90° 共用同一套 proposal / transaction |
+| v5.2a | **Transaction 升級**：proposal 支援 `removeBlocks` / `removeConnections` / `replaces`（既有連接改接） |
+| **v5.2** | **Auto Tee**：分支端點垂直朝向另一條直線的中段 → 主線拆成兩段並插入三通 |
 
 ### Auto Elbow 90°（v4）
 
@@ -59,7 +61,40 @@ v4 第一版僅支援 Straight↔Straight、90°、同寬。
 - 彎頭形狀固定為順時針轉 θ；左轉時自動對調 X / Y，所以左右轉皆可。
 - 範例資料沒有 45° 的組合；把兩條直線放成 45° 夾角（例如一條 rotation 0、另一條 rotation 225 且端點朝向交點）再按「偵測 45° 彎頭」即可。
 
-後續規劃：v5.2 Auto Tee。
+### Transaction 契約（v5.2a）
+
+所有 Auto* 功能共用 `js/transaction.js`，proposal 的欄位與模擬順序固定：
+
+```text
+removeConnections → removeBlocks → updateBlocks → addBlocks → addConnections
+        ↓
+checkProposal（全部在「模擬後的新狀態」上驗證）
+        ↓ 通過才 commit；任何失敗 → 原 blocks / connections 完全不變
+```
+
+- 不可留下指向不存在 connector 的連接（dangling）。
+- 既有（未移除）連接的端點座標不可被移動。
+- 被移除的連接必須有對應的 `replaces`，且舊端點 → 新端點座標必須相同；替換後的驗證結果不可比原本差。
+- 純新增的連接必須全為 Valid；Loop / 子網路數不可增加。
+
+### Auto Tee（v5.2）
+
+```text
+              Branch                     Main-1 ──[A TEE B]── Main-2
+                │                                     │C
+   Main ────────┼────────      →                   Branch
+```
+
+一次交易完成：移除原 Main、新增 Tee / Main-1 / Main-2、Branch 修到 Tee:C、建立 3 條新連接，
+並把原 Main 兩端既有的連接「替換」到 Main-1:A / Main-2:B（座標不變）。
+
+- 條件：Main 與 Branch 皆為 Straight，同 System / FFL / Width，夾角 90°（±0.1°），Branch 端點 free。
+- Tee 長度 = 2 × 寬度（W300 → 600 mm），中心在交點 J。
+- Main-1 = s − L/2、Main-2 = 原長 − s − L/2，兩段都必須 ≥ 100 mm（交點不可太靠近主線端點）。
+- Branch 新長度 = 原長度 + t − L/2，同樣需 ≥ 100 mm。
+- 主線兩端若已接設備，插入後連接與座標保持不變。
+
+後續可做：Tee 分支寬度不同（自動配 Reducer）、Cross（四通）、支路自動路由。
 
 ## 長度的定義
 
@@ -82,9 +117,10 @@ css/style.css
 js/geometry.js      元件模型、Connector、中心線、輪廓
 js/graph.js         Graph 建模、Route DFS
 js/validator.js     Connection 驗證
-js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交
+js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交（含 remove / replaces）
 js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
 js/autoreducer.js   v5.0 Auto Reducer
+js/autotee.js       v5.2 Auto Tee（拆分主線）
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料
 js/app.js           UI

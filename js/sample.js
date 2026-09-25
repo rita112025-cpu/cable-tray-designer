@@ -18,6 +18,10 @@
       // 自動變徑候選：W200 與 W150 同軸相對、間距 250mm
       mk("B10", "T-AUTO-03", "straight", { width: 200, x: 1200, y: 1090, length: 250, from: "AUTO-R1", remark: "v5 Auto Reducer 候選" }),
       mk("B11", "T-AUTO-04", "straight", { width: 150, x: 1950, y: 1090, rotation: 180, length: 250, to: "AUTO-R2", remark: "v5 Auto Reducer 候選" }),
+      // 自動三通候選：CONTROL 系統（與其他元件隔離，避免被其他偵測誤配）。
+      // 主線 B12 水平；分支 B13 從下方垂直朝向主線中段（J=(2100,1350)）
+      mk("B12", "T-AUTO-05", "straight", { system: "CONTROL", x: 1500, y: 1350, length: 1200, from: "MCC-CTL", to: "JB-CTL", remark: "v5.2 Auto Tee 主線" }),
+      mk("B13", "T-AUTO-06", "straight", { system: "CONTROL", x: 2100, y: 1800, rotation: 270, length: 300, from: "FIELD-CTL", remark: "v5.2 Auto Tee 分支" }),
     ];
   };
 
