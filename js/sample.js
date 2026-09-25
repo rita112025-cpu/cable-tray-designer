@@ -11,10 +11,13 @@
       mk("B4", "T-03", "straight", { x: 2550, y: 670, rotation: 90, length: 400, elevation: 3200, from: "JB-03", to: "MCC-02", remark: "FFL 不同測試" }),
       mk("B5", "R-01", "reducer", { widthStart: 300, widthEnd: 200, x: 80, y: 500, length: 600, from: "MCC-01", to: "JB-04" }),
       mk("B6", "T-04", "straight", { width: 200, x: 800, y: 500, length: 700, from: "JB-04", to: "JB-05" }),
-      mk("B7", "TEE-01", "tee", { x: 1900, y: 800, from: "JB-06", to: "JB-07", remark: "三通" }),
+      mk("B7", "TEE-01", "tee", { x: 1900, y: 650, from: "JB-06", to: "JB-07", remark: "三通" }),
       // 自動彎頭候選：B8 朝右、B9 朝下，交於 (1080, 1050)
       mk("B8", "T-AUTO-01", "straight", { innerRadius: 150, x: 80, y: 1050, length: 800, from: "MCC-AUTO", remark: "v4 Auto Elbow 候選" }),
       mk("B9", "T-AUTO-02", "straight", { innerRadius: 150, x: 1080, y: 600, rotation: 90, length: 300, to: "JB-AUTO", remark: "v4 Auto Elbow 候選" }),
+      // 自動變徑候選：W200 與 W150 同軸相對、間距 250mm
+      mk("B10", "T-AUTO-03", "straight", { width: 200, x: 1200, y: 1090, length: 250, from: "AUTO-R1", remark: "v5 Auto Reducer 候選" }),
+      mk("B11", "T-AUTO-04", "straight", { width: 150, x: 1950, y: 1090, rotation: 180, length: 250, to: "AUTO-R2", remark: "v5 Auto Reducer 候選" }),
     ];
   };
 

@@ -19,6 +19,7 @@ window.__dirname = ".";
 const fail = (m) => { throw new Error(m); };
 const shimAssert = {
   ok: (v, m) => v || fail(m || "assert.ok 失敗"),
+  deepEqual: (a, b, m) => JSON.stringify(a) === JSON.stringify(b) || fail(m || `${JSON.stringify(a)} !== ${JSON.stringify(b)}`),
   equal: (a, b, m) => a === b || fail(m || `${JSON.stringify(a)} !== ${JSON.stringify(b)}`),
 };
 window.require = (name) => (String(name).includes("assert") ? shimAssert : { join: (...a) => a.join("/") });
@@ -26,7 +27,9 @@ window.require = (name) => (String(name).includes("assert") ? shimAssert : { joi
 <script src="../js/geometry.js"></script>
 <script src="../js/graph.js"></script>
 <script src="../js/validator.js"></script>
+<script src="../js/transaction.js"></script>
 <script src="../js/autoelbow.js"></script>
+<script src="../js/autoreducer.js"></script>
 <script src="../js/export.js"></script>
 <script src="../js/sample.js"></script>
 <script src="core.test.js"></script>

@@ -93,7 +93,12 @@
 
     // Auto Elbow 預覽
     const pr = state.proposals.find((p) => p.id === state.previewId);
-    if (pr) {
+    if (pr && pr.type === "AUTO_REDUCER") {
+      const G = pr.geometry;
+      const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+      parts.push(`<g pointer-events="none">${ghost}
+        <text x="${(G.A[0] + G.B[0]) / 2}" y="${G.A[1] - pr.info.widthStart / 2 - 16}" text-anchor="middle" font-size="26" font-weight="700" fill="#2563eb">變徑 W${pr.info.widthStart}→W${pr.info.widthEnd}・長 ${CT.REDUCER_LEN}mm</text></g>`);
+    } else if (pr) {
       const G = pr.geometry;
       const arc = `M ${G.p1New[0]} ${G.p1New[1]} A ${G.Rc} ${G.Rc} 0 0 1 ${G.p2New[0]} ${G.p2New[1]}`;
       parts.push(`<g pointer-events="none">
@@ -154,9 +159,11 @@
   function renderProposals() {
     $("proposals").innerHTML = state.proposals.map((p) => `
       <div class="proposal ${state.previewId === p.id ? "sel" : ""}">
-        <div><b>${esc(p.sourceConnectors[0])} ↔ ${esc(p.sourceConnectors[1])}</b>
-          <div>W${p.info.width} ${esc(p.info.system)} FFL+${p.info.elevation} ｜ 夾角 90° ｜ 需退縮 ${p.geometry.Rc}mm ｜ t1=${p.geometry.t1.toFixed(0)} t2=${p.geometry.t2.toFixed(0)}</div>
-          <div class="sub">${esc(p.info.trayX)} ${p.info.oldLenX}→${p.info.newLenX} ・ ${esc(p.info.trayY)} ${p.info.oldLenY}→${p.info.newLenY} ・ +1 elbow90 ・ +2 connections</div></div>
+        <div><b>${p.type === "AUTO_REDUCER" ? "變徑" : "彎頭"}：${esc(p.sourceConnectors[0])} ↔ ${esc(p.sourceConnectors[1])}</b>
+          <div>${p.type === "AUTO_REDUCER"
+            ? `W${p.info.widthStart}→W${p.info.widthEnd} ${esc(p.info.system)} FFL+${p.info.elevation} ｜ 間距 ${p.geometry.gap.toFixed(0)}mm ｜ 變徑長 ${CT.REDUCER_LEN}mm`
+            : `W${p.info.width} ${esc(p.info.system)} FFL+${p.info.elevation} ｜ 夾角 90° ｜ 需退縮 ${p.geometry.Rc}mm ｜ t1=${p.geometry.t1.toFixed(0)} t2=${p.geometry.t2.toFixed(0)}`}</div>
+          <div class="sub">${esc(p.info.trayX)} ${p.info.oldLenX}→${p.info.newLenX} ・ ${esc(p.info.trayY)} ${p.info.oldLenY}→${p.info.newLenY} ・ +1 ${p.type === "AUTO_REDUCER" ? "reducer" : "elbow90"} ・ +2 connections</div></div>
         <div class="row"><button class="btn small" data-act="preview" data-id="${esc(p.id)}">預覽</button>
           <button class="btn small dark" data-act="apply" data-id="${esc(p.id)}">套用</button>
           <button class="btn small" data-act="ignore" data-id="${esc(p.id)}">忽略</button></div>
@@ -264,17 +271,20 @@
     const conns = exists ? state.connections : [...state.connections, { id: `C${Date.now()}`, from: state.pending, to: key }];
     setState({ connections: conns, pending: null, proposals: [], previewId: null });
   }
-  function detect() {
-    const { proposals, notes } = CT.detectAutoElbows(state.blocks, state.connections);
+  function detect(kind) {
+    const isRed = kind === "reducer";
+    const { proposals, notes } = isRed ? CT.detectAutoReducers(state.blocks, state.connections) : CT.detectAutoElbows(state.blocks, state.connections);
     setState({ proposals, previewId: proposals[0] ? proposals[0].id : null });
-    if (proposals.length) toast(`偵測到 ${proposals.length} 個可插入 90° 彎頭的位置`);
-    else toast("未偵測到可插入位置" + (notes.length ? "：" + notes[0] : ""), true);
+    const what = isRed ? "變徑" : "90° 彎頭";
+    if (proposals.length) toast(`偵測到 ${proposals.length} 個可插入${what}的位置`);
+    else toast(`未偵測到可插入${what}的位置` + (notes.length ? "：" + notes[0] : ""), true);
   }
   function applyProposal(id) {
     const pr = state.proposals.find((p) => p.id === id);
     if (!pr) return;
     // 以目前狀態重新 build + validate；成功才一次 setState（blocks + connections 同時更新）
-    const r = CT.commitAutoElbow(state.blocks, state.connections, pr.sourceConnectors[0], pr.sourceConnectors[1]);
+    const commit = pr.type === "AUTO_REDUCER" ? CT.commitAutoReducer : CT.commitAutoElbow;
+    const r = commit(state.blocks, state.connections, pr.sourceConnectors[0], pr.sourceConnectors[1]);
     if (!r.ok) {
       setState({ proposals: state.proposals.filter((p) => p.id !== id), previewId: null });
       return toast("套用失敗，狀態未變更：" + r.reason, true);
@@ -351,7 +361,8 @@
 
   $("add-buttons").innerHTML = Object.entries(TYPE_LABEL).map(([t, l]) => `<button class="btn" data-add="${t}">${l}</button>`).join("");
   $("add-buttons").addEventListener("click", (ev) => { const t = ev.target.closest("[data-add]"); if (t) addBlock(t.dataset.add); });
-  $("btn-detect").addEventListener("click", detect);
+  $("btn-detect").addEventListener("click", () => detect("elbow"));
+  $("btn-detect-reducer").addEventListener("click", () => detect("reducer"));
   $("btn-dxf").addEventListener("click", () => download(CT.toDXF(state.blocks, state.connections), "cable-tray-sketch-AC1014.dxf", "application/dxf"));
   $("btn-csv").addEventListener("click", () => download(CT.toCSV(state.blocks), "bom.csv", "text/csv;charset=utf-8"));
   $("btn-json").addEventListener("click", () => download(CT.toJSON(state.blocks, state.connections, CT.buildGraph(state.blocks, state.connections)), "graph.json", "application/json"));

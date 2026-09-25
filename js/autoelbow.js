@@ -23,19 +23,9 @@
   const MIN_LEN = 100; // 退縮後直線最短長度 mm
   const MAX_REACH = 2000; // 射線交點最遠距離 mm
   const ANGLE_TOL = 1; // 夾角容差 °
-  const r2 = (v) => Math.round(v * 100) / 100;
-  const usedSet = (conns) => {
-    const s = new Set();
-    conns.forEach((c) => { s.add(c.from); s.add(c.to); });
-    return s;
-  };
-  const endpoint = (blocks, key) => {
-    const [bid, cid] = key.split(":");
-    const b = blocks.find((x) => x.id === bid);
-    const k = b && b.connectors.find((x) => x.id === cid);
-    return k ? { b, k } : null;
-  };
-  CT.endpointOf = endpoint;
+  const r2 = CT.round2;
+  const usedSet = CT.usedConnectors;
+  const endpoint = CT.endpointOf;
 
   CT.buildProposal = function (blocks, connections, keyA, keyB) {
     let X = endpoint(blocks, keyA);
@@ -93,10 +83,7 @@
       innerRadius: X.b.innerRadius, bendAngle: 90, rotation: r2(X.k.worldDir),
       x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, from: "", to: "", remark: "v4 自動插入彎頭",
     };
-    // 直線被改動的那一端：B 端只改長度；A 端要連同起點一起移動（另一端保持不動）
-    const update = (E, newLen, tip) => (E.k.id === "B"
-      ? { id: E.b.id, newLength: r2(newLen) }
-      : { id: E.b.id, newLength: r2(newLen), newX: r2(tip[0]), newY: r2(tip[1]) });
+    const update = CT.tipUpdate;
 
     return {
       ok: true,
@@ -118,61 +105,13 @@
     };
   };
 
-  /** 在「模擬後的新狀態」上驗證；不修改輸入 */
+  /** 彎頭專屬的幾何檢查 + 共用的 CT.checkProposal */
   CT.validateProposal = function (blocks, connections, pr) {
     const errs = [];
-    const nextBlocks = blocks
-      .map((b) => {
-        const u = pr.updateBlocks.find((x) => x.id === b.id);
-        if (!u) return b;
-        const o = { ...b, length: u.newLength };
-        if (u.newX != null) { o.x = u.newX; o.y = u.newY; }
-        return CT.refresh(o);
-      })
-      .concat(pr.addBlocks.map(CT.refresh));
-    const eid = pr.addBlocks[0].id;
-    const newConns = pr.addConnections.map((c, i) => ({ id: `${eid}-C${i + 1}`, from: c.from, to: c.to }));
-    const nextConns = [...connections, ...newConns];
-
-    // 1. occupied
-    const used = usedSet(connections);
-    pr.sourceConnectors.forEach((k) => { if (used.has(k)) errs.push(`occupied：${k} 已被占用`); });
-    // 2. geometry
     if (!(pr.geometry.t1 >= 0 && pr.geometry.t2 >= 0)) errs.push("geometry：射線交點在後方");
-    pr.updateBlocks.forEach((u) => { if (!(u.newLength >= MIN_LEN)) errs.push(`geometry：${u.id} 新長度 ${u.newLength} < ${MIN_LEN}`); });
-    // 3. endpoints：新連接兩端必須重合
-    pr.addConnections.forEach((c) => {
-      const a = endpoint(nextBlocks, c.from);
-      const b = endpoint(nextBlocks, c.to);
-      if (!a || !b) { errs.push(`endpoint：${c.from}↔${c.to} 端點不存在`); return; }
-      const gap = Math.hypot(a.k.worldX - b.k.worldX, a.k.worldY - b.k.worldY);
-      if (gap > 0.5) errs.push(`endpoint：${c.from}↔${c.to} 端點未重合（${gap.toFixed(2)}mm）`);
-    });
-    // 4. 既有連接的端點不可被移動
-    connections.forEach((c) => [c.from, c.to].forEach((k) => {
-      const o = endpoint(blocks, k);
-      const n = endpoint(nextBlocks, k);
-      if (o && n && Math.hypot(o.k.worldX - n.k.worldX, o.k.worldY - n.k.worldY) > 0.01) errs.push(`既有連接端點 ${k} 被移動`);
-    }));
-    // 5. connector validator：新連接必須全為 Valid；既有連接不可新增 Invalid
-    const after = CT.validateConnections(nextBlocks, nextConns);
-    newConns.forEach((c) => {
-      const r = after.find((x) => x.id === c.id);
-      if (!r) errs.push("validator：找不到新連接");
-      else if (r.overall !== "Valid") errs.push(`validator：${c.from}↔${c.to} ${r.overall} — ${r.checks.filter((x) => x.status !== "Valid").map((x) => x.detail).join(" / ")}`);
-    });
-    const before = CT.validateConnections(blocks, connections);
-    after.forEach((r) => {
-      const old = before.find((x) => x.id === r.id);
-      if (old && old.overall !== "Invalid" && r.overall === "Invalid") errs.push(`validator：既有連接 ${r.id} 變成 Invalid`);
-    });
-    // 6. graph：不可增加 Loop 或子網路
-    const g1 = CT.buildGraph(blocks, connections);
-    const g2 = CT.buildGraph(nextBlocks, nextConns);
-    if (g2.loopCount > g1.loopCount) errs.push(`graph：Loop ${g1.loopCount}→${g2.loopCount}`);
-    if (g2.subgraphCount > g1.subgraphCount) errs.push(`graph：子網路 ${g1.subgraphCount}→${g2.subgraphCount}`);
-
-    return { ok: errs.length === 0, errs, blocks: nextBlocks, connections: nextConns };
+    const c = CT.checkProposal(blocks, connections, pr, MIN_LEN);
+    errs.push(...c.errs);
+    return { ok: errs.length === 0, errs, blocks: c.blocks, connections: c.connections };
   };
 
   /** 偵測所有可插入位置（只回傳通過驗證的 proposal） */
@@ -200,21 +139,8 @@
     return { proposals, notes };
   };
 
-  /**
-   * 提交：以「目前」狀態重新 build + validate，避免使用過期 proposal。
-   * 成功回傳新的 blocks / connections；失敗只回傳原因，不產生任何新狀態。
-   */
-  CT.commitAutoElbow = function (blocks, connections, keyA, keyB) {
-    try {
-      const r = CT.buildProposal(blocks, connections, keyA, keyB);
-      if (!r.ok) return { ok: false, reason: r.reason };
-      const v = CT.validateProposal(blocks, connections, r.proposal);
-      if (!v.ok) return { ok: false, reason: v.errs.join("；") };
-      return { ok: true, blocks: v.blocks, connections: v.connections, proposal: r.proposal };
-    } catch (err) {
-      return { ok: false, reason: `例外：${err && err.message}` };
-    }
-  };
+  /** 提交：成功回傳新的 blocks / connections；失敗只回傳原因，不產生任何新狀態。 */
+  CT.commitAutoElbow = (blocks, connections, keyA, keyB) => CT.commitWith(CT.buildProposal, CT.validateProposal, blocks, connections, keyA, keyB);
 
   if (typeof module !== "undefined") module.exports = CT;
 })(globalThis);

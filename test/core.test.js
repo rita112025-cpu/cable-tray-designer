@@ -1,7 +1,7 @@
 // 執行：node test/core.test.js （或 npm test）
 const assert = require("node:assert/strict");
 const path = require("node:path");
-["geometry", "graph", "validator", "autoelbow", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
+["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
 const CT = globalThis.CT;
 
 let passed = 0;
@@ -153,6 +153,114 @@ test("退縮後長度不足 100mm → 擋下", () => {
   const bl = CT.sampleBlocks().map((b) => (b.id === "B9" ? CT.refresh({ ...b, y: 830, length: 120 }) : b));
   const r = CT.buildProposal(bl, [], "B8:B", "B9:B");
   assert.equal(r.ok, false);
+});
+
+console.log("Auto Reducer (v5.0)");
+// P: W300 直線（B 端 x=1000）；Q: W200 直線（A 端 x=1400，朝左）→ 間距 400
+const RP = (o) => B("straight", { id: "P", width: 300, x: 0, y: 0, length: 1000, ...o });
+const RQ = (o) => B("straight", { id: "Q", width: 200, x: 1400, y: 0, length: 800, ...o });
+
+test("W300 ↔ W200 直線 → 產生 Reducer proposal，A 端對 W300、B 端對 W200", () => {
+  const r = CT.buildReducerProposal([RP(), RQ()], [], "P:B", "Q:A");
+  assert.ok(r.ok, r.reason);
+  const rd = r.proposal.addBlocks[0];
+  assert.equal(rd.type, "reducer"); assert.equal(rd.widthStart, 300); assert.equal(rd.widthEnd, 200);
+  assert.deepEqual(r.proposal.addConnections.map((c) => [c.from, c.to]), [["P:B", `${rd.id}:A`], [`${rd.id}:B`, "Q:A"]]);
+  assert.equal(r.proposal.type, "AUTO_REDUCER");
+});
+test("傳入順序相反，A 端仍對較寬的一側", () => {
+  const r = CT.buildReducerProposal([RP(), RQ()], [], "Q:A", "P:B");
+  assert.ok(r.ok, r.reason);
+  const rd = r.proposal.addBlocks[0];
+  assert.equal(rd.widthStart, 300); assert.equal(rd.widthEnd, 200);
+  assert.equal(r.proposal.sourceConnectors[0], "P:B");
+});
+test("System 不同 / FFL 不同 / 相同寬度 → 不產生 proposal", () => {
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ system: "POWER" })], [], "P:B", "Q:A").ok, false);
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ elevation: 3200 })], [], "P:B", "Q:A").ok, false);
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ width: 300 })], [], "P:B", "Q:A").ok, false);
+});
+test("不同軸（偏移）或未相對 → 不產生 proposal", () => {
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ y: 60 })], [], "P:B", "Q:A").ok, false);
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ rotation: 90 })], [], "P:B", "Q:A").ok, false);
+  assert.equal(CT.buildReducerProposal([RP(), RQ({ x: 500 })], [], "P:B", "Q:A").ok, false); // 已重疊（間距為負）
+});
+test("套用後兩條新連接皆 Valid，原本的 Width mismatch Warning 消失", () => {
+  const bl = [RP(), RQ()];
+  const manual = CT.validateConnections(bl, [{ id: "m", from: "P:B", to: "Q:A" }])[0];
+  assert.equal(manual.overall, "Warning");
+  const r = CT.commitAutoReducer(bl, [], "P:B", "Q:A");
+  assert.ok(r.ok, r.reason);
+  const v = CT.validateConnections(r.blocks, r.connections);
+  assert.equal(v.length, 2);
+  assert.ok(v.every((x) => x.overall === "Valid"));
+  assert.equal(r.connections.length, 2);
+});
+test("幾何：間距 400 → 變徑 300，兩側各調整 50；端點皆重合", () => {
+  const r = CT.commitAutoReducer([RP(), RQ()], [], "P:B", "Q:A");
+  const len = (id) => r.proposal.updateBlocks.find((u) => u.id === id).newLength;
+  assert.equal(len("P"), 1050); assert.equal(len("Q"), 850);
+  r.connections.forEach((c) => {
+    const a = CT.endpointOf(r.blocks, c.from), b = CT.endpointOf(r.blocks, c.to);
+    near(a.k.worldX, b.k.worldX, 0.02); near(a.k.worldY, b.k.worldY, 0.02);
+  });
+  // Q 的 A 端往左移 50 → x=1350，B 端保持在 2200
+  const q = r.blocks.find((b) => b.id === "Q");
+  near(q.connectors[0].worldX, 1350); near(q.connectors[1].worldX, 2200);
+});
+test("旋轉 180° 的相對配置也可處理", () => {
+  const P = RP({ x: 2000, rotation: 180 }); // B 端在 x=1000，朝左
+  const Q = RQ({ x: 0, length: 600 });      // B 端在 x=600，朝右
+  const r = CT.commitAutoReducer([P, Q], [], "P:B", "Q:B");
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.proposal.addBlocks[0].widthStart, 300);
+});
+test("occupied connector → 不允許", () => {
+  const bl = [RP(), RQ(), B("straight", { id: "Z", width: 300, x: 1000, y: 0, length: 900, rotation: 0 })];
+  const conns = [{ id: "c", from: "P:B", to: "Z:A" }];
+  assert.equal(CT.buildReducerProposal(bl, conns, "P:B", "Q:A").ok, false);
+  assert.equal(CT.commitAutoReducer(bl, conns, "P:B", "Q:A").ok, false);
+});
+test("空間 / 長度不足 → 不提交", () => {
+  // 間距 100（<變徑 300）需各縮 100；Q 長度只有 150 → 縮後 50 < 100
+  const r = CT.commitAutoReducer([RP(), RQ({ x: 1100, length: 150 })], [], "P:B", "Q:A");
+  assert.equal(r.ok, false);
+});
+test("交易式：commit 失敗時輸入 blocks / connections 完全不變", () => {
+  const bad = [RP(), RQ({ x: 1100, length: 150 })]; const cn = [];
+  const snap = JSON.stringify([bad, cn]);
+  assert.equal(CT.commitAutoReducer(bad, cn, "P:B", "Q:A").ok, false);
+  assert.equal(JSON.stringify([bad, cn]), snap);
+  const ok = [RP(), RQ()]; const snap2 = JSON.stringify([ok, cn]);
+  assert.equal(CT.commitAutoReducer(ok, cn, "P:B", "Q:A").ok, true);
+  assert.equal(JSON.stringify([ok, cn]), snap2);
+});
+test("Graph：Loop 不增加、子網路數不惡化", () => {
+  const bl = [RP(), RQ()];
+  const g1 = CT.buildGraph(bl, []);
+  const r = CT.commitAutoReducer(bl, [], "P:B", "Q:A");
+  const g2 = CT.buildGraph(r.blocks, r.connections);
+  assert.ok(g2.loopCount <= g1.loopCount);
+  assert.ok(g2.subgraphCount <= g1.subgraphCount);
+});
+test("連續執行第二次：不會再插入第二個 Reducer", () => {
+  const r = CT.commitAutoReducer([RP(), RQ()], [], "P:B", "Q:A");
+  assert.equal(CT.detectAutoReducers(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(CT.commitAutoReducer(r.blocks, r.connections, "P:B", "Q:A").ok, false);
+});
+test("範例資料：偵測到 1 組 Reducer（W200→W150）；Auto Elbow 仍為 1 組", () => {
+  const bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  const { proposals } = CT.detectAutoReducers(bl, cn);
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].addBlocks[0].widthStart, 200); assert.equal(proposals[0].addBlocks[0].widthEnd, 150);
+  assert.equal(CT.detectAutoElbows(bl, cn).proposals.length, 1);
+});
+test("Elbow 與 Reducer 可接續套用（範例資料 Loop 仍為 0）", () => {
+  let bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  const e = CT.commitAutoElbow(bl, cn, "B8:B", "B9:B"); assert.ok(e.ok, e.reason); bl = e.blocks; cn = e.connections;
+  const r = CT.detectAutoReducers(bl, cn).proposals[0];
+  const c = CT.commitAutoReducer(bl, cn, r.sourceConnectors[0], r.sourceConnectors[1]); assert.ok(c.ok, c.reason);
+  assert.equal(CT.buildGraph(c.blocks, c.connections).loopCount, 0);
 });
 
 console.log("Export");

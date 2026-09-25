@@ -23,7 +23,8 @@
 | v2 | Connector 資料模型（每個元件有 A/B/C/D 端點，含世界座標與方向）、Tray ID / System / FFL / From / To 欄位 |
 | v3 | Graph 引擎：Route DFS、孤立元件、子網路、Loop；Connection 驗證器（占用 / System / FFL / 端點有效寬 / 方向 / 自迴路） |
 | v3.1 | Tee / Cross 以虛擬 Junction 節點建模（避免假 Loop）；Reducer 只比較「實際接上的兩個端點」寬度 |
-| **v4** | **Auto Elbow 90°**：偵測 → 提案 → 驗證 → 一次提交（失敗則狀態完全不變） |
+| v4 | **Auto Elbow 90°**：偵測 → 提案 → 驗證 → 一次提交（失敗則狀態完全不變） |
+| **v5.0** | **Auto Reducer**：兩條同軸相對、寬度不同的直線 → 自動插入變徑（W300→W200） |
 
 ### Auto Elbow 90°（v4）
 
@@ -33,7 +34,18 @@
 4. **驗證**：在「模擬後的新狀態」上檢查 occupied、幾何、端點重合、既有連接端點未被移動、Connector 驗證器（新連接必須全為 Valid）、Graph（Loop / 子網路數不增加）。
 5. **提交**：以目前狀態重新 build + validate；全部通過才一次更新 `blocks` 與 `connections`。任何失敗回傳原因，原資料不變。
 
-v4 第一版僅支援 Straight↔Straight、90°、同寬。45°、Auto Reducer、Auto Tee 留待 v5。
+v4 第一版僅支援 Straight↔Straight、90°、同寬。
+
+### Auto Reducer（v5.0）
+
+兩條 free 的 Straight，端點同軸、朝向彼此、System / FFL 相同、寬度不同，就能插入變徑：
+
+- 變徑長度預設 300 mm，兩條直線各調整 `(間距 − 300) / 2`（間距大則延伸補足，間距小則退縮修短），調整後長度需 ≥ 100 mm。
+- 變徑的 A 端固定接較寬的一側（`widthStart ≥ widthEnd`），與傳入順序無關。
+- 寬度、System、FFL、方向的判斷**不自己寫**，一律沿用 `CT.validateConnections` 與 `CT.buildGraph`；新增的兩條連接必須全為 Valid，Loop / 子網路數不可增加。
+- 與 Auto Elbow 共用同一套交易契約（`js/transaction.js`）：驗證失敗時輸入的 blocks / connections 完全不變。
+
+後續規劃：v5.1 Auto Elbow 45°、v5.2 Auto Tee。
 
 ## 長度的定義
 
@@ -56,7 +68,9 @@ css/style.css
 js/geometry.js      元件模型、Connector、中心線、輪廓
 js/graph.js         Graph 建模、Route DFS
 js/validator.js     Connection 驗證
+js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交
 js/autoelbow.js     v4 Auto Elbow（proposal / validate / commit）
+js/autoreducer.js   v5.0 Auto Reducer
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料
 js/app.js           UI
