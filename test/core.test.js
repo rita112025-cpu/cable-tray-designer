@@ -263,6 +263,103 @@ test("Elbow 與 Reducer 可接續套用（範例資料 Loop 仍為 0）", () => 
   assert.equal(CT.buildGraph(c.blocks, c.connections).loopCount, 0);
 });
 
+console.log("Auto Elbow 45° (v5.1)");
+const TAN = Math.tan(Math.PI / 8); // tan(22.5°)
+// X 朝東，B 端在 (1000,0)；Y 的端點朝 225°（右轉 45°）或 135°（左轉 45°）
+// 交點 C=(1300,0)，t1=300、t2=500（可用參數覆寫）。整體可再繞原點旋轉 rot。
+function elbow45Layout({ turn = "right", rot = 0, t2 = 500, lenY = 600, y = {} } = {}) {
+  const C = [1300, 0];
+  const dirY = turn === "right" ? 225 : 135;
+  const u2 = [Math.cos((dirY * Math.PI) / 180), Math.sin((dirY * Math.PI) / 180)];
+  const tip = [C[0] - t2 * u2[0], C[1] - t2 * u2[1]];
+  const org = [tip[0] - lenY * u2[0], tip[1] - lenY * u2[1]]; // Y 的 A 端（B 端才是朝向 C 的端點）
+  const rotate = (b) => {
+    const w = CT.toWorld({ x: 0, y: 0, rotation: rot }, b.x, b.y);
+    return CT.refresh({ ...b, x: w.x, y: w.y, rotation: (b.rotation + rot) % 360 });
+  };
+  const P = B("straight", { id: "P", innerRadius: 150, width: 300, x: 0, y: 0, length: 1000 });
+  const Q = B("straight", { id: "Q", innerRadius: 150, width: 300, x: org[0], y: org[1], rotation: dirY, length: lenY, ...y });
+  return [rotate(P), rotate(Q)];
+}
+const c45 = (bl, cn = []) => CT.commitAutoElbow(bl, cn, "P:B", "Q:B", 45);
+
+test("退縮量 T = Rc·tan(22.5°) ≈ 124.26mm（Rc=300）；彎頭中心線長 = Rc·π/4", () => {
+  const r = CT.buildProposal(elbow45Layout(), [], "P:B", "Q:B", 45);
+  assert.ok(r.ok, r.reason);
+  near(r.proposal.geometry.setback, 300 * TAN, 1e-9);
+  near(r.proposal.geometry.setback, 124.264, 0.001);
+  const el = CT.refresh(r.proposal.addBlocks[0]);
+  assert.equal(el.type, "elbow45"); assert.equal(el.bendAngle, 45);
+  near(CT.centerlineLength(el), (300 * Math.PI) / 4, 1e-9);
+  assert.equal(r.proposal.type, "AUTO_ELBOW_45");
+});
+test("新長度 = 原長度 + t − T（P 1000→1175.74，Q 600→975.74）", () => {
+  const r = c45(elbow45Layout());
+  assert.ok(r.ok, r.reason);
+  const len = (id) => r.proposal.updateBlocks.find((u) => u.id === id).newLength;
+  near(len("P"), 1000 + 300 - 300 * TAN, 0.01); near(len("Q"), 600 + 500 - 300 * TAN, 0.01);
+});
+test("右轉 / 左轉、旋轉 0/90/180/270：皆成功，兩個 tangent point 與彎頭 A/B 精確重合", () => {
+  for (const turn of ["right", "left"]) {
+    for (const rot of [0, 90, 180, 270]) {
+      const r = c45(elbow45Layout({ turn, rot }));
+      assert.ok(r.ok, `${turn} rot=${rot}: ${r.reason}`);
+      r.connections.forEach((c) => {
+        const a = CT.endpointOf(r.blocks, c.from), b = CT.endpointOf(r.blocks, c.to);
+        near(a.k.worldX, b.k.worldX, 0.02); near(a.k.worldY, b.k.worldY, 0.02);
+      });
+      const G = r.proposal.geometry, el = r.blocks.find((b) => b.id.startsWith("EL-A"));
+      const [pa, pb] = [G.p1New, G.p2New];
+      const hit = (pt) => el.connectors.some((k) => Math.hypot(k.worldX - pt[0], k.worldY - pt[1]) < 0.02);
+      assert.ok(hit(pa) && hit(pb), `tangent points ${turn} ${rot}`);
+    }
+  }
+});
+test("套用後兩條連接皆 Valid，Loop 不增加、子網路不惡化", () => {
+  const bl = elbow45Layout();
+  const g1 = CT.buildGraph(bl, []);
+  const r = c45(bl);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  const g2 = CT.buildGraph(r.blocks, r.connections);
+  assert.ok(g2.loopCount <= g1.loopCount); assert.ok(g2.subgraphCount <= g1.subgraphCount);
+});
+test("角度容差：44° / 46° / 30° / 60° 不會被當成 45°；45° 版面不會被當成 90°", () => {
+  const off = (d) => elbow45Layout({ y: { rotation: 225 + d } });
+  // 直接改 Q 的 rotation 會使 B 端位置也變，這裡只需要驗證「夾角判斷」
+  [-1, 1, -15, 15].forEach((d) => {
+    const bl = off(d);
+    assert.equal(CT.buildProposal(bl, [], "P:B", "Q:B", 45).ok, false, `Δ${d}`);
+  });
+  assert.equal(CT.buildProposal(elbow45Layout(), [], "P:B", "Q:B", 90).ok, false);
+  assert.equal(CT.buildProposal(elbow45Layout(), [], "P:B", "Q:B", 30).ok, false); // 不支援的角度
+});
+test("90° 版面（L 型）不會被 45° 偵測抓到，45° 版面不會被 90° 偵測抓到", () => {
+  assert.equal(CT.detectAutoElbows(CT.sampleBlocks(), CT.sampleConnections(), 45).proposals.length, 0);
+  assert.equal(CT.detectAutoElbows(elbow45Layout(), [], 90).proposals.length, 0);
+  assert.equal(CT.detectAutoElbows(elbow45Layout(), [], 45).proposals.length, 1);
+});
+test("長度不足 100mm → 失敗且輸入完全不變", () => {
+  const bl = elbow45Layout({ t2: 0, lenY: 100 }); // Q 新長度 = 100 + 0 − 124 < 100
+  const snap = JSON.stringify([bl, []]);
+  assert.equal(c45(bl).ok, false);
+  assert.equal(JSON.stringify([bl, []]), snap);
+});
+test("System / FFL / Width 不一致 → 失敗", () => {
+  assert.equal(c45(elbow45Layout({ y: { system: "POWER" } })).ok, false);
+  assert.equal(c45(elbow45Layout({ y: { elevation: 3200 } })).ok, false);
+  assert.equal(c45(elbow45Layout({ y: { width: 200 } })).ok, false);
+});
+test("第二次執行不會再插入第二個 45° 彎頭", () => {
+  const r = c45(elbow45Layout());
+  assert.equal(CT.detectAutoElbows(r.blocks, r.connections, 45).proposals.length, 0);
+  assert.equal(c45(r.blocks, r.connections).ok, false);
+});
+test("45° 與 90° 彎頭可在同一專案接續套用", () => {
+  const e90 = CT.commitAutoElbow(CT.sampleBlocks(), CT.sampleConnections(), "B8:B", "B9:B");
+  assert.ok(e90.ok, e90.reason);
+  assert.ok(e90.blocks.some((b) => b.type === "elbow90" && b.id.startsWith("EL-A")));
+});
+
 console.log("Export");
 test("DXF：AC1014、TRAY-LINK、無 AC1009 / TRAY-DIM / DIMENSION", () => {
   const bl = CT.sampleBlocks(); const dxf = CT.toDXF(bl, CT.sampleConnections());

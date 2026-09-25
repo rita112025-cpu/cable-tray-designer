@@ -25,6 +25,7 @@
 | v3.1 | Tee / Cross 以虛擬 Junction 節點建模（避免假 Loop）；Reducer 只比較「實際接上的兩個端點」寬度 |
 | v4 | **Auto Elbow 90°**：偵測 → 提案 → 驗證 → 一次提交（失敗則狀態完全不變） |
 | **v5.0** | **Auto Reducer**：兩條同軸相對、寬度不同的直線 → 自動插入變徑（W300→W200） |
+| **v5.1** | **Auto Elbow 45°**：切線退縮量 `T = Rc·tan(θ/2)`，與 90° 共用同一套 proposal / transaction |
 
 ### Auto Elbow 90°（v4）
 
@@ -45,7 +46,20 @@ v4 第一版僅支援 Straight↔Straight、90°、同寬。
 - 寬度、System、FFL、方向的判斷**不自己寫**，一律沿用 `CT.validateConnections` 與 `CT.buildGraph`；新增的兩條連接必須全為 Valid，Loop / 子網路數不可增加。
 - 與 Auto Elbow 共用同一套交易契約（`js/transaction.js`）：驗證失敗時輸入的 blocks / connections 完全不變。
 
-後續規劃：v5.1 Auto Elbow 45°、v5.2 Auto Tee。
+### Auto Elbow 45°（v5.1）
+
+與 90° 共用同一套流程，只有幾何參數不同：
+
+| 彎角 θ | 切線退縮量 T = Rc·tan(θ/2) | Rc=300 時 |
+| --- | --- | --- |
+| 90° | Rc | 300 mm |
+| 45° | Rc × 0.41421 | 124.26 mm |
+
+- 夾角判斷採嚴格容差 ±0.1°（彎頭端點需精確重合），因此 44° / 46° / 30° / 60° 不會被當成 45°。
+- 彎頭形狀固定為順時針轉 θ；左轉時自動對調 X / Y，所以左右轉皆可。
+- 範例資料沒有 45° 的組合；把兩條直線放成 45° 夾角（例如一條 rotation 0、另一條 rotation 225 且端點朝向交點）再按「偵測 45° 彎頭」即可。
+
+後續規劃：v5.2 Auto Tee。
 
 ## 長度的定義
 
@@ -69,7 +83,7 @@ js/geometry.js      元件模型、Connector、中心線、輪廓
 js/graph.js         Graph 建模、Route DFS
 js/validator.js     Connection 驗證
 js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交
-js/autoelbow.js     v4 Auto Elbow（proposal / validate / commit）
+js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
 js/autoreducer.js   v5.0 Auto Reducer
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料

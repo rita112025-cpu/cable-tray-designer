@@ -12,8 +12,8 @@
   <header class="topbar">
     <div class="logo">CT</div>
     <div>
-      <div class="title">Cable Tray 配置設計器 <span class="ver">v5.0</span></div>
-      <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90° / Auto Reducer（提案→驗證→提交）• 2D 草圖 DXF</div>
+      <div class="title">Cable Tray 配置設計器 <span class="ver">v5.1</span></div>
+      <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90°/45° / Auto Reducer（提案→驗證→提交）• 2D 草圖 DXF</div>
     </div>
     <div class="stats" id="stats"></div>
     <div class="tools">
@@ -53,8 +53,9 @@
         <div class="auto-panel">
           <div class="row">
             <button class="btn dark" id="btn-detect">🔍 偵測 90° 彎頭</button>
+            <button class="btn dark" id="btn-detect-45">🔍 偵測 45° 彎頭</button>
             <button class="btn dark" id="btn-detect-reducer">🔍 偵測 變徑</button>
-            <span class="hint">Straight↔Straight・free connector・同 System/FFL/Width・夾角 90°・退縮 Rc = 內半徑 + 寬/2。驗證失敗則狀態完全不變。Auto Reducer：兩條同軸相對、寬度不同的直線 → 插入變徑。45° 彎頭 / Tee 自動生成：後續版本。</span>
+            <span class="hint">Straight↔Straight・free connector・同 System/FFL/Width・夾角 90° 或 45°・退縮量 T = Rc·tan(θ/2)，Rc = 內半徑 + 寬/2。驗證失敗則狀態完全不變。Auto Reducer：兩條同軸相對、寬度不同的直線 → 插入變徑。Tee 自動生成：後續版本。</span>
           </div>
           <div id="toast" class="toast" hidden></div>
           <div id="proposals"></div>

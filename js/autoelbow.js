@@ -1,5 +1,5 @@
 /**
- * autoelbow.js — v4 自動插入 90° 彎頭（交易式）
+ * autoelbow.js — 自動插入 90° / 45° 彎頭（交易式）
  *
  * 流程（全部為純函式，不修改傳入的 blocks / connections）：
  *   detect()          掃描 free Straight connector 的兩兩組合
@@ -14,20 +14,27 @@
  *   彎頭 A 端 = C − Rc·u1，B 端 = C − Rc·u2，兩條直線的端點各移到這兩點，
  *   新長度 = 原長度 + t − Rc（t < Rc 為退縮修短，t > Rc 為延伸補足）。
  *
- *   彎頭的形狀固定為「順時針」轉 90°（A 朝 180°、B 朝 90°）。
- *   因此要求 dirX = dirY + 90°；若相反就把 X、Y 對調，左轉/右轉皆可處理。
+ *   彎頭的形狀固定為「順時針」轉 θ（A 朝 180°、B 朝 θ）。
+ *   行進方向由 X 出發沿 u1 到 C，再沿 −u2 離開，順時針轉角 θ 需滿足 dirX − dirY = 180° − θ
+ *   （90° → 90°；45° → 135°）；若為 180° + θ 就把 X、Y 對調，左轉 / 右轉皆可處理。
+ *
+ * v5.1：泛化為任意彎角 θ（目前開放 90° 與 45°）：
+ *   切線退縮量 T = Rc · tan(θ/2)     （90° → Rc；45° → Rc · 0.41421）
+ *   彎頭 A 端 = C − T·u1，B 端 = C − T·u2
+ *   新長度 = 原長度 + t − T（t < T 為退縮修短，t > T 為延伸補足）
  */
 (function (root) {
   const CT = (root.CT = root.CT || {});
 
   const MIN_LEN = 100; // 退縮後直線最短長度 mm
   const MAX_REACH = 2000; // 射線交點最遠距離 mm
-  const ANGLE_TOL = 1; // 夾角容差 °
+  const ANGLE_TOL = 0.1; // 夾角容差 °（彎頭端點需精確重合，故取嚴格值；44° / 46° 不會被當成 45°）
+  CT.ELBOW_ANGLES = [90, 45];
   const r2 = CT.round2;
   const usedSet = CT.usedConnectors;
   const endpoint = CT.endpointOf;
 
-  CT.buildProposal = function (blocks, connections, keyA, keyB) {
+  CT.buildProposal = function (blocks, connections, keyA, keyB, angle = 90) {
     let X = endpoint(blocks, keyA);
     let Y = endpoint(blocks, keyB);
     let xKey = keyA;
@@ -38,14 +45,16 @@
     const used = usedSet(connections);
     if (used.has(xKey) || used.has(yKey)) return { ok: false, stage: "pre", reason: "Connector 已占用，非 free connector" };
 
-    // 需要 dirX − dirY = 90°；若為 270° 就對調
+    if (!CT.ELBOW_ANGLES.includes(angle)) return { ok: false, stage: "pre", reason: `不支援 ${angle}° 彎頭` };
+    // 需要 dirX − dirY = 180° − θ；若為 180° + θ 就對調
+    const want = 180 - angle;
     let d = CT.normDeg(X.k.worldDir - Y.k.worldDir);
-    if (Math.abs(d - 270) < ANGLE_TOL) {
+    if (Math.abs(d - (360 - want)) < ANGLE_TOL) {
       [X, Y] = [Y, X];
       [xKey, yKey] = [yKey, xKey];
-      d = 90;
+      d = want;
     }
-    if (Math.abs(d - 90) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: "夾角不是 90°" };
+    if (Math.abs(d - want) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: `夾角不是 ${angle}°` };
 
     if (X.b.system !== Y.b.system) return { ok: false, stage: "attr", reason: `System 不一致 ${X.b.system} vs ${Y.b.system}` };
     if (X.b.elevation !== Y.b.elevation) return { ok: false, stage: "attr", reason: `FFL 不一致 +${X.b.elevation} vs +${Y.b.elevation}` };
@@ -64,24 +73,25 @@
     if (t1 > MAX_REACH || t2 > MAX_REACH) return { ok: false, stage: "geom", reason: `距離過遠（t1=${t1.toFixed(0)}, t2=${t2.toFixed(0)}, 上限 ${MAX_REACH}）` };
 
     const Rc = X.b.innerRadius + w / 2;
-    const newLenX = X.b.length + t1 - Rc;
-    const newLenY = Y.b.length + t2 - Rc;
+    const T = Rc * Math.tan(CT.rad(angle) / 2); // 切線退縮量
+    const newLenX = X.b.length + t1 - T;
+    const newLenY = Y.b.length + t2 - T;
     if (newLenX < MIN_LEN || newLenY < MIN_LEN) {
-      return { ok: false, stage: "geom", reason: `調整後長度不足 ${MIN_LEN}mm：${X.b.trayId}→${newLenX.toFixed(0)} / ${Y.b.trayId}→${newLenY.toFixed(0)}（需退縮 ${Rc}mm）` };
+      return { ok: false, stage: "geom", reason: `調整後長度不足 ${MIN_LEN}mm：${X.b.trayId}→${newLenX.toFixed(0)} / ${Y.b.trayId}→${newLenY.toFixed(0)}（需退縮 ${T.toFixed(1)}mm）` };
     }
 
     const C = [X.k.worldX + t1 * u1[0], X.k.worldY + t1 * u1[1]];
-    const A = [C[0] - Rc * u1[0], C[1] - Rc * u1[1]];
-    const B = [C[0] - Rc * u2[0], C[1] - Rc * u2[1]];
+    const A = [C[0] - T * u1[0], C[1] - T * u1[1]];
+    const B = [C[0] - T * u2[0], C[1] - T * u2[1]];
 
     let n = 1;
     while (blocks.some((b) => b.id === `EL-A${n}`)) n++;
     const eid = `EL-A${n}`;
     const elbow = {
-      id: eid, trayId: `ELBOW-AUTO-${String(n).padStart(3, "0")}`, type: "elbow90",
+      id: eid, trayId: `ELBOW-AUTO-${String(n).padStart(3, "0")}`, type: `elbow${angle}`,
       system: X.b.system, width: w, widthStart: w, widthEnd: w, length: 600,
-      innerRadius: X.b.innerRadius, bendAngle: 90, rotation: r2(X.k.worldDir),
-      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, from: "", to: "", remark: "v4 自動插入彎頭",
+      innerRadius: X.b.innerRadius, bendAngle: angle, rotation: r2(X.k.worldDir),
+      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, from: "", to: "", remark: `自動插入 ${angle}° 彎頭`,
     };
     const update = CT.tipUpdate;
 
@@ -89,11 +99,11 @@
       ok: true,
       proposal: {
         id: `${xKey}|${yKey}`,
-        type: "AUTO_ELBOW_90",
+        type: `AUTO_ELBOW_${angle}`,
         sourceConnectors: [xKey, yKey],
-        geometry: { C, p1: [X.k.worldX, X.k.worldY], p2: [Y.k.worldX, Y.k.worldY], p1New: A, p2New: B, Rc, t1, t2, setback: Rc },
+        geometry: { C, p1: [X.k.worldX, X.k.worldY], p2: [Y.k.worldX, Y.k.worldY], p1New: A, p2New: B, Rc, t1, t2, setback: T, angle },
         info: {
-          system: X.b.system, width: w, elevation: X.b.elevation,
+          system: X.b.system, width: w, elevation: X.b.elevation, angle,
           trayX: X.b.trayId, trayY: Y.b.trayId,
           oldLenX: X.b.length, oldLenY: Y.b.length, newLenX: r2(newLenX), newLenY: r2(newLenY),
         },
@@ -115,7 +125,7 @@
   };
 
   /** 偵測所有可插入位置（只回傳通過驗證的 proposal） */
-  CT.detectAutoElbows = function (blocks, connections) {
+  CT.detectAutoElbows = function (blocks, connections, angle = 90) {
     const used = usedSet(connections);
     const free = [];
     blocks.forEach((b) => {
@@ -126,7 +136,7 @@
     const notes = [];
     for (let i = 0; i < free.length; i++) {
       for (let j = i + 1; j < free.length; j++) {
-        const r = CT.buildProposal(blocks, connections, free[i], free[j]);
+        const r = CT.buildProposal(blocks, connections, free[i], free[j], angle);
         if (!r.ok) {
           if (r.stage === "attr" || r.stage === "geom") notes.push(`${free[i]}↔${free[j]}：${r.reason}`);
           continue;
@@ -140,7 +150,7 @@
   };
 
   /** 提交：成功回傳新的 blocks / connections；失敗只回傳原因，不產生任何新狀態。 */
-  CT.commitAutoElbow = (blocks, connections, keyA, keyB) => CT.commitWith(CT.buildProposal, CT.validateProposal, blocks, connections, keyA, keyB);
+  CT.commitAutoElbow = (blocks, connections, keyA, keyB, angle = 90) => CT.commitWith((b, c, x, y) => CT.buildProposal(b, c, x, y, angle), CT.validateProposal, blocks, connections, keyA, keyB);
 
   if (typeof module !== "undefined") module.exports = CT;
 })(globalThis);
