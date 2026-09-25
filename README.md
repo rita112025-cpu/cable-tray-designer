@@ -28,6 +28,7 @@
 | **v5.1** | **Auto Elbow 45°**：切線退縮量 `T = Rc·tan(θ/2)`，與 90° 共用同一套 proposal / transaction |
 | v5.2a | **Transaction 升級**：proposal 支援 `removeBlocks` / `removeConnections` / `replaces`（既有連接改接） |
 | **v5.2** | **Auto Tee**：分支端點垂直朝向另一條直線的中段 → 主線拆成兩段並插入三通 |
+| **v5.3** | **Auto Tee + Branch Reducer**：分支寬度與主線不同時，同一個 transaction 內一併插入 Reducer |
 
 ### Auto Elbow 90°（v4）
 
@@ -94,7 +95,27 @@ checkProposal（全部在「模擬後的新狀態」上驗證）
 - Branch 新長度 = 原長度 + t − L/2，同樣需 ≥ 100 mm。
 - 主線兩端若已接設備，插入後連接與座標保持不變。
 
-後續可做：Tee 分支寬度不同（自動配 Reducer）、Cross（四通）、支路自動路由。
+### 分支不同寬：Tee + Reducer（v5.3）
+
+主線 W300、分支 W150 時，**不是**做一個「A/B 為 W300、C 為 W150」的特殊三通，而是 Tee 仍以主線寬度為準，
+並在 Tee:C 與分支之間插入一個 Reducer；整個動作是**同一個 transaction**（不是先 commit Tee 再 commit Reducer）：
+
+```text
+Main W300
+──────────────                 Main-1 ──[ TEE W300 ]── Main-2
+      │ Branch W150      →                  │C
+                                         [Reducer W300→W150]
+                                              │
+                                         Branch W150
+```
+
+- Reducer 的 A 端永遠是寬端：主線較寬 → A 接 Tee:C；分支較寬 → A 在分支側。長度沿用 `CT.REDUCER_LEN`（300 mm）。
+- Branch 新長度 = 原長度 + t − L/2 − 300，需 ≥ 100 mm，否則整筆 transaction 失敗、輸入完全不變。
+- 同寬時維持 v5.2 的行為，不會多加 Reducer。
+- 寬度是否匹配仍由既有的 `CT.validateConnections` 判定（新增 4 條連接皆需 Valid）。
+
+後續規劃：v5.4 Auto Cross、v5.5 Overlap / collision check（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
+不檢查新元件的實體輪廓是否壓到其他 Tray）。
 
 ## 長度的定義
 

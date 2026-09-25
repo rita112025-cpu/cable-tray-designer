@@ -169,8 +169,8 @@
     if (p.type === "AUTO_TEE") {
       return {
         title: `三通：${p.sourceConnectors[0]} → 主線 ${p.mainId}`,
-        line1: `W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ Tee 長 ${p.geometry.L}mm ｜ 分支到主線 t=${p.geometry.t.toFixed(0)}mm`,
-        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR}（拆成兩段） ・ ${esc(i.trayBranch)} ${i.oldLenBranch}→${i.newLenBranch} ・ +1 tee ・ +3 connections`,
+        line1: `主線 W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ Tee 長 ${p.geometry.L}mm ｜ 分支到主線 t=${p.geometry.t.toFixed(0)}mm${i.reducer ? ` ｜ 分支 W${i.widthBranch}，加變徑 W${i.reducer.widthStart}→W${i.reducer.widthEnd}` : ""}`,
+        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR}（拆成兩段） ・ ${esc(i.trayBranch)} ${i.oldLenBranch}→${i.newLenBranch} ・ +1 tee${i.reducer ? " +1 reducer" : ""} ・ +${i.newConnections} connections`,
       };
     }
     if (p.type === "AUTO_REDUCER") {

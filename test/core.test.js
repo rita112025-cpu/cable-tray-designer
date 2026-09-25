@@ -514,10 +514,9 @@ test("Branch 朝向遠離主線 / 距離過遠 / 調整後長度不足 → 失�
   assert.equal(tee([TM(), TS({ y: -4000 })]).ok, false); // t 太大
   assert.equal(tee([TM(), TS({ y: -300, length: 200 })]).ok, false); // tip 在 y=-100，t=100 → 新長度 200+100−300 < 100
 });
-test("System / FFL / Width 不一致、非 90° → 失敗", () => {
+test("System / FFL 不一致、非 90° → 失敗（寬度不同自 v5.3 起改為自動加 Reducer，見下）", () => {
   assert.equal(tee([TM(), TS({ system: "POWER" })]).ok, false);
   assert.equal(tee([TM(), TS({ elevation: 3200 })]).ok, false);
-  assert.equal(tee([TM(), TS({ width: 200 })]).ok, false);
   assert.equal(tee([TM(), TS({ rotation: 80 })]).ok, false);
   assert.equal(tee([TM(), TS({ rotation: 45 })]).ok, false);
 });
@@ -552,6 +551,112 @@ test("範例資料：偵測到 1 組 Tee；Elbow 與 Reducer 各 1 組不變", (
   assert.equal(CT.detectAutoTees(bl, cn).proposals.length, 1);
   assert.equal(CT.detectAutoElbows(bl, cn).proposals.length, 1);
   assert.equal(CT.detectAutoReducers(bl, cn).proposals.length, 1);
+});
+
+console.log("Auto Tee + Branch Reducer (v5.3)");
+const types = (r) => r.blocks.map((b) => b.type).sort().join(",");
+const RED = (r) => r.blocks.find((b) => b.type === "reducer");
+const TEE = (r) => r.blocks.find((b) => b.type === "tee");
+
+test("W300 Main + W150 Branch → Tee + Reducer（W300→W150）一次成功，全部連接 Valid", () => {
+  const r = tee([TM(), TS({ width: 150 })]);
+  assert.ok(r.ok, r.reason);
+  assert.equal(types(r), "reducer,straight,straight,straight,tee");
+  assert.equal(TEE(r).width, 300);
+  assert.equal(RED(r).widthStart, 300); assert.equal(RED(r).widthEnd, 150);
+  assert.equal(r.connections.length, 4);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+});
+test("W150 Main + W300 Branch → Reducer A 端接寬端（分支側），Tee 以 Main 寬度為準", () => {
+  const r = tee([TM({ width: 150 }), TS({ width: 300 })]);
+  assert.ok(r.ok, r.reason);
+  assert.equal(TEE(r).width, 150);
+  assert.equal(RED(r).widthStart, 300); assert.equal(RED(r).widthEnd, 150);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  // A 端（寬）接 Branch，B 端（窄）接 Tee:C
+  const rid = RED(r).id;
+  assert.ok(r.connections.some((c) => [c.from, c.to].includes(`${rid}:A`) && [c.from, c.to].includes("S:B")));
+  assert.ok(r.connections.some((c) => [c.from, c.to].includes(`${rid}:B`) && [c.from, c.to].includes(`${TEE(r).id}:C`)));
+});
+test("同寬 → 走原本的 Auto Tee，不會加 Reducer", () => {
+  const r = tee([TM(), TS()]);
+  assert.equal(types(r), "straight,straight,straight,tee");
+  assert.equal(r.connections.length, 3);
+  assert.equal(r.proposal.info.reducer, null);
+});
+test("Reducer A 永遠是寬端（多種寬度組合）", () => {
+  [[300, 100], [300, 200], [200, 100], [100, 300], [150, 300], [200, 400]].forEach(([wm, wb]) => {
+    const r = tee([TM({ width: wm }), TS({ width: wb })]);
+    assert.ok(r.ok, `${wm}/${wb}: ${r.reason}`);
+    assert.equal(RED(r).widthStart, Math.max(wm, wb)); assert.equal(RED(r).widthEnd, Math.min(wm, wb));
+  });
+});
+test("Tee:C ↔ Reducer ↔ Branch 端點精確重合；Branch 長度 = 原長 + t − L/2 − 300", () => {
+  const r = tee([TM(), TS({ width: 150 })]);
+  allCoincide(r);
+  near(r.blocks.find((b) => b.id === "S").length, 800 + 400 - 300 - 300); // 600
+  // Reducer 位於 Tee:C(1000,-300) 與 Branch 新端點(1000,-600) 之間
+  const xs = RED(r).connectors.map((k) => [k.worldX, k.worldY]).sort((a, b) => b[1] - a[1]);
+  near(xs[0][1], -300); near(xs[1][1], -600); near(xs[0][0], 1000);
+});
+test("分支在上 / 下、整體旋轉 0/90/180/270（兩種寬度方向）：全部成功且 Valid", () => {
+  for (const mk of [TS, TSbelow]) {
+    for (const rot of [0, 90, 180, 270]) {
+      [[300, 150], [150, 300]].forEach(([wm, wb]) => {
+        const r = tee(rot4([TM({ width: wm }), mk({ width: wb })], rot));
+        assert.ok(r.ok, `rot=${rot} ${wm}/${wb}: ${r.reason}`);
+        allCoincide(r);
+        assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+      });
+    }
+  }
+});
+test("Main 原 A/B 外部連接：座標與驗證等級維持（不同寬分支）", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000 });
+  const E2 = B("straight", { id: "E2", x: 2000, y: 0, length: 1000 });
+  const bl = [TM(), TS({ width: 150 }), E1, E2];
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }, { id: "c2", from: "M:B", to: "E2:A" }];
+  const before = CT.validateConnections(bl, cn).map((v) => v.overall);
+  const r = tee(bl, cn);
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.connections.length, 6);
+  const L = r.blocks.find((b) => b.id.startsWith("TL-A")), R = r.blocks.find((b) => b.id.startsWith("TR-A"));
+  near(L.connectors[0].worldX, 0); near(R.connectors[1].worldX, 2000);
+  assert.deepEqual(before, ["Valid", "Valid"]);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  assert.equal(CT.buildGraph(r.blocks, r.connections).subgraphCount, 1);
+});
+test("Branch 長度不足（含 Reducer 之後）→ 整筆 fail，輸入完全不變；同寬時同樣配置可成功", () => {
+  const mk = (w) => [TM(), TS({ width: w, y: -500, length: 200 })]; // tip y=-300、t=300
+  assert.equal(tee(mk(300)).ok, true); // 200+300−300 = 200
+  const bad = mk(150); const snap = JSON.stringify([bad, []]);
+  assert.equal(tee(bad).ok, false); // 200+300−300−300 = −100
+  assert.equal(JSON.stringify([bad, []]), snap);
+});
+test("System / FFL 不同、Branch occupied → fail（不同寬時同樣適用）", () => {
+  assert.equal(tee([TM(), TS({ width: 150, system: "POWER" })]).ok, false);
+  assert.equal(tee([TM(), TS({ width: 150, elevation: 3200 })]).ok, false);
+  const Z = B("straight", { id: "Z", width: 150, x: 1000, y: -400, length: 300, rotation: 270 });
+  assert.equal(tee([TM(), TS({ width: 150 }), Z], [{ id: "c", from: "S:B", to: "Z:A" }]).ok, false);
+});
+test("Loop 不增加、subgraph 不惡化；成功時也不修改輸入", () => {
+  const bl = [TM(), TS({ width: 150 })]; const snap = JSON.stringify([bl, []]);
+  const g1 = CT.buildGraph(bl, []);
+  const r = tee(bl);
+  const g2 = CT.buildGraph(r.blocks, r.connections);
+  assert.equal(g2.loopCount, 0); assert.ok(g2.subgraphCount <= g1.subgraphCount); assert.equal(g2.subgraphCount, 1);
+  assert.equal(JSON.stringify([bl, []]), snap);
+});
+test("第二次執行不能再重複插 Tee / Reducer", () => {
+  const r = tee([TM(), TS({ width: 150 })]);
+  assert.equal(CT.detectAutoTees(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(CT.detectAutoReducers(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(tee(r.blocks, r.connections).ok, false);
+});
+test("Reducer 的寬度由既有 validator 判定：不會出現 Width mismatch", () => {
+  const r = tee([TM({ width: 200 }), TS({ width: 100 })]);
+  const v = CT.validateConnections(r.blocks, r.connections);
+  assert.ok(v.every((x) => x.checks.filter((c) => c.name === "寬度匹配").every((c) => c.status === "Valid")));
 });
 
 console.log("Export");
