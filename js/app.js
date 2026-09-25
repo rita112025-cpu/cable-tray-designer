@@ -51,7 +51,7 @@
 
   function renderCanvas(d) {
     const parts = [];
-    parts.push(`<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="0.9" fill="#d6d3cd"/></pattern></defs><rect width="3000" height="1200" fill="url(#grid)"/>`);
+    parts.push(`<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="0.9" class="grid-dot"/></pattern></defs><rect width="3000" height="1200" fill="url(#grid)"/>`);
 
     // Connection 線
     state.connections.forEach((c) => {
@@ -59,35 +59,34 @@
       const B = CT.endpointOf(state.blocks, c.to);
       if (!A || !B) return;
       const status = (d.validation.find((v) => v.id === c.id) || {}).overall;
-      const color = status === "Invalid" ? "#ef4444" : status === "Warning" ? "#eab308" : "#18181b";
+      const color = status === "Invalid" ? "#ef4444" : status === "Warning" ? "#eab308" : "var(--ink)";
       const gap = Math.hypot(A.k.worldX - B.k.worldX, A.k.worldY - B.k.worldY);
-      parts.push(`<line x1="${A.k.worldX}" y1="${A.k.worldY}" x2="${B.k.worldX}" y2="${B.k.worldY}" stroke="${color}" stroke-width="${status === "Invalid" ? 4 : 2.5}" ${status === "Warning" ? 'stroke-dasharray="8 6"' : ""}/>`);
-      if (gap > 1) parts.push(`<circle cx="${(A.k.worldX + B.k.worldX) / 2}" cy="${(A.k.worldY + B.k.worldY) / 2}" r="7" fill="${color}"/>`);
+      parts.push(`<line x1="${A.k.worldX}" y1="${A.k.worldY}" x2="${B.k.worldX}" y2="${B.k.worldY}" style="stroke:${color}" stroke-width="${status === "Invalid" ? 4 : 2.5}" ${status === "Warning" ? 'stroke-dasharray="8 6"' : ""}/>`);
+      if (gap > 1) parts.push(`<circle cx="${(A.k.worldX + B.k.worldX) / 2}" cy="${(A.k.worldY + B.k.worldY) / 2}" r="7" style="fill:${color}"/>`);
     });
 
     // 元件
     state.blocks.forEach((b) => {
       const sel = state.selectedId === b.id;
-      const fill = sel ? "#fef08a" : "#fff";
       let g = `<g class="blk" data-block="${esc(b.id)}">`;
       CT.worldOutlines(b).forEach((poly) => {
-        g += `<polygon points="${polyPoints(poly)}" fill="${fill}" stroke="#18181b" stroke-width="${sel ? 2.5 : 1.5}" stroke-linejoin="round"/>`;
+        g += `<polygon points="${polyPoints(poly)}" class="shape${sel ? " sel" : ""}" stroke-width="${sel ? 3 : 2}" stroke-linejoin="round"/>`;
       });
       const label = b.type === "reducer" ? `${b.trayId} W${b.widthStart}→W${b.widthEnd}` : `${b.trayId} W${b.width} ${b.system}`;
       const top = CT.toWorld(b, b.type === "tee" || b.type === "cross" ? 0 : (b.type.startsWith("elbow") ? CT.centerlineRadius(b) / 2 : b.length / 2), -Math.max(b.width, b.widthStart, b.widthEnd) / 2 - 14);
-      g += `<text x="${top.x}" y="${top.y}" text-anchor="middle" font-size="18" font-weight="700" fill="#18181b" pointer-events="none">${esc(label)}</text>`;
+      g += `<text x="${top.x}" y="${top.y}" text-anchor="middle" font-size="24" font-weight="700" class="svg-text" pointer-events="none">${esc(label)}</text>`;
       if (b.type === "tee" || b.type === "cross") {
         const j = d.graph.nodes.get(`${b.id}:J`);
         if (j) {
-          b.connectors.forEach((k) => { g += `<line x1="${k.worldX}" y1="${k.worldY}" x2="${j.worldX}" y2="${j.worldY}" stroke="#a1a1aa" stroke-dasharray="3 3"/>`; });
-          g += `<circle cx="${j.worldX}" cy="${j.worldY}" r="6" fill="#18181b" stroke="#fff" stroke-width="1.5"/>`;
+          b.connectors.forEach((k) => { g += `<line x1="${k.worldX}" y1="${k.worldY}" x2="${j.worldX}" y2="${j.worldY}" style="stroke:var(--mute)" stroke-dasharray="3 3"/>`; });
+          g += `<circle cx="${j.worldX}" cy="${j.worldY}" r="7" class="junction" stroke-width="1.5"/>`;
         }
       }
       b.connectors.forEach((k) => {
         const key = `${b.id}:${k.id}`;
         const occ = (d.graph.nodes.get(key) || {}).occupiedCount || 0;
         const fillC = state.pending === key ? "#eab308" : occ > 0 ? "#a1a1aa" : "#22c55e";
-        g += `<g class="conn" data-conn="${esc(key)}"><circle cx="${k.worldX}" cy="${k.worldY}" r="14" fill="${fillC}" stroke="#18181b" stroke-width="1.5"/><text x="${k.worldX}" y="${k.worldY + 4.5}" text-anchor="middle" font-size="12" font-weight="800" fill="#fff" pointer-events="none">${k.id}</text></g>`;
+        g += `<g class="conn" data-conn="${esc(key)}"><circle cx="${k.worldX}" cy="${k.worldY}" r="17" fill="${fillC}" style="stroke:var(--ink)" stroke-width="1.5"/><text x="${k.worldX}" y="${k.worldY + 6}" text-anchor="middle" font-size="16" font-weight="800" fill="#fff" pointer-events="none">${k.id}</text></g>`;
       });
       parts.push(g + "</g>");
     });
@@ -105,7 +104,7 @@
         <path d="${arc}" fill="none" stroke="#2563eb" stroke-width="${pr.info.width}" opacity="0.22"/>
         <path d="${arc}" fill="none" stroke="#2563eb" stroke-width="3"/>
         <circle cx="${G.C[0]}" cy="${G.C[1]}" r="12" fill="#ef4444"/>
-        <text x="${G.C[0] + 18}" y="${G.C[1] - 14}" font-size="20" font-weight="700" fill="#b91c1c">C・需退縮 ${G.Rc}mm</text></g>`);
+        <text x="${G.C[0] + 18}" y="${G.C[1] - 14}" font-size="26" font-weight="700" fill="#ef4444">C・需退縮 ${G.Rc}mm</text></g>`);
     }
     $("canvas").innerHTML = parts.join("");
   }
@@ -358,6 +357,33 @@
   $("btn-json").addEventListener("click", () => download(CT.toJSON(state.blocks, state.connections, CT.buildGraph(state.blocks, state.connections)), "graph.json", "application/json"));
   $("btn-sample").addEventListener("click", () => setState({ blocks: CT.sampleBlocks(), connections: CT.sampleConnections(), selectedId: "B1", pending: null, proposals: [], previewId: null }));
   $("btn-clear").addEventListener("click", () => setState({ blocks: [], connections: [], selectedId: null, pending: null, proposals: [], previewId: null }));
+
+  // ---------- 外觀：亮/暗版與文字大小（記在 localStorage） ----------
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕模式等情況忽略 */ } },
+  };
+  const SCALES = [1, 1.15, 1.3, 1.5];
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $("btn-theme").textContent = theme === "dark" ? "☀️ 亮版" : "🌙 暗版";
+    store.set("ct-theme", theme);
+  }
+  function applyScale(i) {
+    i = Math.max(0, Math.min(SCALES.length - 1, i));
+    document.documentElement.style.setProperty("--scale", SCALES[i]);
+    $("btn-font-minus").disabled = i === 0;
+    $("btn-font-plus").disabled = i === SCALES.length - 1;
+    store.set("ct-scale", i);
+    scaleIdx = i;
+  }
+  let scaleIdx = parseInt(store.get("ct-scale"), 10);
+  if (!(scaleIdx >= 0 && scaleIdx < SCALES.length)) scaleIdx = 1; // 預設較大字（parseInt(null) 為 NaN）
+  applyTheme(store.get("ct-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  applyScale(scaleIdx);
+  $("btn-theme").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+  $("btn-font-minus").addEventListener("click", () => applyScale(scaleIdx - 1));
+  $("btn-font-plus").addEventListener("click", () => applyScale(scaleIdx + 1));
 
   // 給除錯 / 自動化測試用
   globalThis.CTApp = { state, setState };

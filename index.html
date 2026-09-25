@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cable Tray 配置設計器</title>
   <meta name="description" content="電纜架（Cable Tray）配置、Connector 連接驗證、Route 分析與 2D 草圖 DXF 匯出 — 教學與概念排線用">
+  <script>try{var t=localStorage.getItem("ct-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t}catch(e){}</script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -15,6 +16,11 @@
       <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90°（提案→驗證→提交）• 2D 草圖 DXF</div>
     </div>
     <div class="stats" id="stats"></div>
+    <div class="tools">
+      <button class="btn small" id="btn-font-minus" title="縮小文字" aria-label="縮小文字">A−</button>
+      <button class="btn small" id="btn-font-plus" title="放大文字" aria-label="放大文字">A＋</button>
+      <button class="btn small" id="btn-theme" title="切換亮版 / 暗版">🌙 暗版</button>
+    </div>
   </header>
 
   <div class="disclaimer">
