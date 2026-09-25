@@ -1,0 +1,10 @@
+{
+  "name": "cable-tray-designer",
+  "version": "4.0.0",
+  "description": "Cable tray layout, connector validation, route analysis and 2D sketch DXF export (teaching / concept use)",
+  "private": true,
+  "scripts": {
+    "test": "node test/core.test.js",
+    "start": "python -m http.server 8000"
+  }
+}

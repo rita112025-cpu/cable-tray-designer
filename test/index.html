@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Cable Tray — 單元測試（瀏覽器版）</title>
+<style>body{font:14px/1.5 ui-monospace,Consolas,monospace;padding:16px}.f{color:#b91c1c}.p{color:#15803d}</style>
+</head>
+<body>
+<h3>Cable Tray core tests（不需要 Node，直接用瀏覽器開啟）</h3>
+<pre id="out"></pre>
+<script>
+// 讓 test/core.test.js 可以在瀏覽器執行：以簡易 shim 取代 Node 的 require / process
+const out = document.getElementById("out");
+const log = (cls, args) => { const d = document.createElement("div"); d.className = cls; d.textContent = args.join(" "); out.appendChild(d); };
+console.log = (...a) => log("", a);
+console.error = (...a) => log("f", a);
+window.process = { exitCode: 0 };
+window.__dirname = ".";
+const fail = (m) => { throw new Error(m); };
+const shimAssert = {
+  ok: (v, m) => v || fail(m || "assert.ok 失敗"),
+  equal: (a, b, m) => a === b || fail(m || `${JSON.stringify(a)} !== ${JSON.stringify(b)}`),
+};
+window.require = (name) => (String(name).includes("assert") ? shimAssert : { join: (...a) => a.join("/") });
+</script>
+<script src="../js/geometry.js"></script>
+<script src="../js/graph.js"></script>
+<script src="../js/validator.js"></script>
+<script src="../js/autoelbow.js"></script>
+<script src="../js/export.js"></script>
+<script src="../js/sample.js"></script>
+<script src="core.test.js"></script>
+<script>document.title = (process.exitCode ? "FAIL" : "PASS") + " — tests";</script>
+</body>
+</html>

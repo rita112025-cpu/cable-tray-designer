@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cable Tray 配置設計器</title>
+  <meta name="description" content="電纜架（Cable Tray）配置、Connector 連接驗證、Route 分析與 2D 草圖 DXF 匯出 — 教學與概念排線用">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo">CT</div>
+    <div>
+      <div class="title">Cable Tray 配置設計器 <span class="ver">v4</span></div>
+      <div class="subtitle">Connector 圖模型 • 連接驗證 • Auto Elbow 90°（提案→驗證→提交）• 2D 草圖 DXF</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="disclaimer">
+    教學／概念草圖，非 AutoCAD 動態圖塊。DXF 為 LWPOLYLINE + TEXT + LINE（AC1014），無 BLOCK / INSERT / DIMENSION / 3D。BOM 僅數量與長度，不含重量。
+  </div>
+
+  <nav class="tabs" id="tabs"></nav>
+
+  <main id="view-config" class="view">
+    <div class="layout">
+      <aside class="sidebar">
+        <h4>新增元件</h4>
+        <div class="grid2" id="add-buttons"></div>
+        <p class="hint">拖曳移動（吸附 40）。點擊兩個 Connector 建立連接（綠＝空閒、灰＝已占用、黃＝待連接）。</p>
+        <h4>匯出</h4>
+        <button class="btn dark" id="btn-dxf">2D 草圖 DXF (AC1014)</button>
+        <button class="btn" id="btn-csv">CSV BOM</button>
+        <button class="btn" id="btn-json">JSON Graph</button>
+        <h4>專案</h4>
+        <button class="btn" id="btn-sample">載入範例</button>
+        <button class="btn" id="btn-clear">清空</button>
+      </aside>
+
+      <section class="canvas-col">
+        <div class="canvas-wrap">
+          <svg id="canvas" viewBox="0 0 3000 1200" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="pending" id="pending" hidden></div>
+        </div>
+
+        <div class="auto-panel">
+          <div class="row">
+            <button class="btn dark" id="btn-detect">🔍 偵測 90° 彎頭</button>
+            <span class="hint">Straight↔Straight・free connector・同 System/FFL/Width・夾角 90°・退縮 Rc = 內半徑 + 寬/2。驗證失敗則狀態完全不變。45° / Reducer / Tee 自動生成：v5。</span>
+          </div>
+          <div id="toast" class="toast" hidden></div>
+          <div id="proposals"></div>
+        </div>
+
+        <div class="detail">
+          <div class="card" id="props"></div>
+          <div class="card" id="conn-list"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <main id="view-routes" class="view" hidden></main>
+  <main id="view-validator" class="view" hidden></main>
+  <main id="view-bom" class="view" hidden></main>
+
+  <script src="js/geometry.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/validator.js"></script>
+  <script src="js/autoelbow.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/sample.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
