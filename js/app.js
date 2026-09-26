@@ -41,6 +41,7 @@
       graph,
       routes: null, // 需要時才算
       validation: CT.validateConnections(state.blocks, state.connections),
+      overlaps: CT.findOverlaps(state.blocks),
     };
   }
 
@@ -51,6 +52,7 @@
 
   function renderCanvas(d) {
     const parts = [];
+    const overlapIds = new Set(d.overlaps.flatMap((o) => [o.a, o.b]));
     parts.push(`<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="0.9" class="grid-dot"/></pattern></defs><rect width="3000" height="1900" fill="url(#grid)"/>`);
 
     // Connection 線
@@ -68,9 +70,10 @@
     // 元件
     state.blocks.forEach((b) => {
       const sel = state.selectedId === b.id;
+      const hit = overlapIds.has(b.id);
       let g = `<g class="blk" data-block="${esc(b.id)}">`;
       CT.worldOutlines(b).forEach((poly) => {
-        g += `<polygon points="${polyPoints(poly)}" class="shape${sel ? " sel" : ""}" stroke-width="${sel ? 3 : 2}" stroke-linejoin="round"/>`;
+        g += `<polygon points="${polyPoints(poly)}" class="shape${sel ? " sel" : ""}${hit ? " overlap" : ""}" stroke-width="${sel ? 3 : 2}" stroke-linejoin="round"/>`;
       });
       const label = b.type === "reducer" ? `${b.trayId} W${b.widthStart}→W${b.widthEnd}` : `${b.trayId} W${b.width} ${b.system}`;
       const top = CT.toWorld(b, b.type === "tee" || b.type === "cross" ? 0 : (b.type.startsWith("elbow") ? CT.centerlineRadius(b) / 2 : b.length / 2), -Math.max(b.width, b.widthStart, b.widthEnd) / 2 - 14);
@@ -229,7 +232,8 @@
       ${card("迴圈數", g.loopCount, "Tee/Cross 以 Junction 節點建模，不會誤報", g.loopCount > 0)}
       ${card("全專案中心線合計", (g.totalCenterline / 1000).toFixed(3) + " m", "所有元件中心線加總（非單一 Route）")}
       ${card("直線+變徑 length 加總", (comp / 1000).toFixed(3) + " m", "元件 length 欄位，不含彎頭弧長")}
-      ${card("Graph 節點", g.nodes.size, "含 Tee/Cross 的 Junction")}</div><h3>Routes（端點到端點）</h3>`;
+      ${card("Graph 節點", g.nodes.size, "含 Tee/Cross 的 Junction")}
+      ${card("輪廓重疊", d.overlaps.length, d.overlaps.length ? esc(d.overlaps.slice(0, 4).map((o) => `${o.a}×${o.b}`).join(", ")) : "無（穿透 ≤ 1mm 或共邊不算）", d.overlaps.length > 0)}</div><h3>Routes（端點到端點）</h3>`;
     if (!routes.length) html += `<p class="hint">尚無 Route（需要至少一條連接）</p>`;
     routes.forEach((r) => {
       html += `<div class="route"><b>${r.id}</b> 中心線長 <b>${(r.length / 1000).toFixed(3)} m</b>

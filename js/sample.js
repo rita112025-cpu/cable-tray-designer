@@ -5,7 +5,7 @@
   CT.sampleBlocks = function () {
     const mk = (id, trayId, type, o) => CT.createBlock(type, { id, trayId, ...o });
     return [
-      mk("B1", "T-01", "straight", { x: 80, y: 220, length: 1000, from: "MCC-01", to: "JB-01" }),
+      mk("B1", "T-01", "straight", { x: 80, y: 180, length: 1000, from: "MCC-01", to: "JB-01" }),
       mk("B2", "T-02", "straight", { system: "POWER", width: 100, x: 1200, y: 220, length: 800, from: "JB-01", to: "JB-02", remark: "寬度/System 不同測試" }),
       mk("B3", "E-01", "elbow90", { x: 2100, y: 220, from: "JB-02", to: "JB-03", remark: "90 度彎頭" }),
       mk("B4", "T-03", "straight", { x: 2550, y: 670, rotation: 90, length: 400, elevation: 3200, from: "JB-03", to: "MCC-02", remark: "FFL 不同測試" }),

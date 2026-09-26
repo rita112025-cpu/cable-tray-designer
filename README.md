@@ -30,6 +30,7 @@
 | **v5.2** | **Auto Tee**：分支端點垂直朝向另一條直線的中段 → 主線拆成兩段並插入三通 |
 | **v5.3** | **Auto Tee + Branch Reducer**：分支寬度與主線不同時，同一個 transaction 內一併插入 Reducer |
 | **v5.4** | **Auto Cross**：主線兩側各有一條分支、交在同一點 → 主線拆成兩段並插入四通 |
+| **v5.5** | **Overlap / Collision check**：所有 Auto* 提案在 commit 前檢查新增的實體輪廓重疊（共用於 `checkProposal`） |
 
 ### Auto Elbow 90°（v4）
 
@@ -136,7 +137,22 @@ Main ───────────┼───────────  → 
 - 偵測十字配置時，「偵測 三通」也會分別列出兩條分支各自的 Tee 方案；選其中一個即可，套用 Cross 後兩者都會消失。
 - 範例資料沒有 Cross 候選（放進去會讓範例的 Tee 偵測變成 2 組）；要試的話，在主線兩側各放一條垂直、端點朝向同一點的直線。
 
-後續規劃：v5.5 Overlap / collision check（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
+### 重疊 / 碰撞檢查（v5.5）
+
+Elbow / Reducer / Tee / Cross 過去只保證「數學與連接合法」，新元件仍可能壓到別的 Tray。v5.5 把碰撞檢查放進
+共用的 `CT.checkProposal`（`js/collision.js`），四個 Auto* 功能一起受益，不各自實作，也沒有改 transaction 契約：
+
+- **判定**：兩個凸多邊形沿所有分離軸的穿透深度都 > 1 mm 才算「面積重疊」；共邊 / 端點相接（已連接的相鄰元件）不算。
+- **形狀**：Straight / Reducer / Tee / Cross 用實際輪廓；Elbow 是圓環扇形（凹），拆成小四邊形逐塊比較，
+  所以放在彎頭內側空腔的元件不會被誤判成重疊（不是外接框判斷）。
+- **只擋新增的重疊**：專案裡原本就重疊的舊問題，不會讓所有提案失敗。Tee / Cross 拆出的 Main-1 / Main-2 會用
+  `proposal.derives` 對應回原 Main，所以原 Main 既有的重疊視為既有。
+- **處理方式**：直接擋下（與其他驗證一致）——不會出現在偵測清單，套用時失敗並顯示是哪兩個元件重疊，輸入完全不變。
+- **介面**：目前專案裡重疊的元件會在畫布上以紅色粗框標示；「路徑分析」分頁有「輪廓重疊」統計。
+
+限制：只比較平面輪廓，不考慮不同 FFL（高程）的元件其實可以上下疊放；目前所有元件一律視為同一平面。
+
+後續規劃：Cross + 兩個 Branch Reducer、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
 不檢查新元件的實體輪廓是否壓到其他 Tray）。
 
 ## 長度的定義
@@ -165,6 +181,7 @@ js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
 js/autoreducer.js   v5.0 Auto Reducer
 js/autotee.js       v5.2 Auto Tee（拆分主線）
 js/autocross.js     v5.4 Auto Cross
+js/collision.js     v5.5 輪廓重疊檢查（供 checkProposal 使用）
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料
 js/app.js           UI

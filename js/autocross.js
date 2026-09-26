@@ -108,6 +108,7 @@
           newConnections: addConnections.length - split.removeConnections.length,
         },
         removeBlocks: [M.id],
+        derives: { [lId]: M.id, [rId]: M.id },
         removeConnections: split.removeConnections,
         updateBlocks: [CT.tipUpdate(S1, newLen1, tip(h1)), CT.tipUpdate(S2, newLen2, tip(h2))],
         addBlocks: [cross, split.left, split.right],

@@ -25,6 +25,7 @@ const shimAssert = {
 window.require = (name) => (String(name).includes("assert") ? shimAssert : { join: (...a) => a.join("/") });
 </script>
 <script src="../js/geometry.js"></script>
+<script src="../js/collision.js"></script>
 <script src="../js/graph.js"></script>
 <script src="../js/validator.js"></script>
 <script src="../js/transaction.js"></script>

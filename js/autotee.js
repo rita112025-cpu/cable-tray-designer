@@ -177,6 +177,7 @@
           oldLenBranch: S.b.length, newLenBranch: r2(newLenS),
         },
         removeBlocks: [M.id],
+        derives: { [lId]: M.id, [rId]: M.id },
         removeConnections,
         updateBlocks: [CT.tipUpdate(S, newLenS, branchTip)],
         addBlocks: reducer ? [tee, left, right, reducer] : [tee, left, right],

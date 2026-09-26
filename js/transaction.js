@@ -9,6 +9,7 @@
  *     updateBlocks:      [{ id, newLength, newX?, newY?, set? }...],
  *     addBlocks:         [block...],
  *     addConnections:    [{ from, to, replaces?: { id, oldKey, newKey } }...],
+ *     derives?:          { 新元件 id: 原元件 id }   // 拆分主線用：讓碰撞檢查把原 Main 既有的重疊視為既有
  *   }
  *
  * simulateProposal 的固定順序：
@@ -81,6 +82,7 @@
    *  - 既有（未移除）連接的端點不可被移動；被 replaces 的端點座標必須相同
    *  - Connector 驗證器：純新增的連接必須 Valid；替換的連接不可比原本差；未動的連接不可變 Invalid
    *  - Graph：Loop / 子網路數不可增加
+   *  - Collision（v5.5）：不可新增實體輪廓的面積重疊
    */
   CT.checkProposal = function (blocks, connections, pr, minLength = 100) {
     const errs = [];
@@ -154,6 +156,11 @@
     const g2 = CT.buildGraph(sim.blocks, sim.connections);
     if (g2.loopCount > g1.loopCount) errs.push(`graph：Loop ${g1.loopCount}→${g2.loopCount}`);
     if (g2.subgraphCount > g1.subgraphCount) errs.push(`graph：子網路 ${g1.subgraphCount}→${g2.subgraphCount}`);
+
+    // 實體輪廓：只擋提案「新增」的面積重疊（見 collision.js）
+    if (CT.newOverlaps) {
+      CT.newOverlaps(blocks, sim.blocks, pr.derives || {}).forEach((o) => errs.push(`collision：${o.a} 與 ${o.b} 輪廓重疊（穿透 ${o.depth.toFixed(1)}mm）`));
+    }
 
     return { errs, blocks: sim.blocks, connections: sim.connections };
   };

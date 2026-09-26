@@ -1,7 +1,7 @@
 // 執行：node test/core.test.js （或 npm test）
 const assert = require("node:assert/strict");
 const path = require("node:path");
-["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "autocross", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
+["geometry", "collision", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "autocross", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
 const CT = globalThis.CT;
 
 let passed = 0;
@@ -779,6 +779,103 @@ test("Tee 與 Cross 可在同一專案接續套用（先 Cross，再對另一條
   const r2 = CT.commitAutoTee(r1.blocks, r1.connections, "S3:B", "M2");
   assert.ok(r2.ok, r2.reason);
   assert.equal(CT.buildGraph(r2.blocks, r2.connections).loopCount, 0);
+});
+
+console.log("Collision (v5.5)");
+const OB = (o) => B("straight", { id: "Z", trayId: "OBST", width: 100, ...o });
+const hasCollision = (r) => !r.ok && r.reason.includes("collision");
+
+test("共邊 / 端點相接不算重疊；穿透 ≤ 1mm 不算；穿透 100mm 算", () => {
+  const a = B("straight", { id: "A", x: 0, y: 0, length: 1000 });
+  const at = (x) => B("straight", { id: "B", x, y: 0, length: 1000 });
+  assert.equal(CT.findOverlaps([a, at(1000)]).length, 0);
+  assert.equal(CT.findOverlaps([a, at(999.5)]).length, 0);
+  const o = CT.findOverlaps([a, at(900)]);
+  assert.equal(o.length, 1); near(o[0].depth, 100, 0.01);
+});
+test("旋轉後的矩形：交叉重疊、分離不重疊", () => {
+  const a = B("straight", { id: "A", x: 0, y: 0, length: 1000 });
+  const cross1 = B("straight", { id: "B", x: 500, y: -500, length: 1000, rotation: 90 });
+  const apart = B("straight", { id: "C", x: 500, y: 300, length: 1000, rotation: 90 });
+  assert.equal(CT.findOverlaps([a, cross1]).length, 1);
+  assert.equal(CT.findOverlaps([a, apart]).length, 0);
+});
+test("彎頭：兩端相接不算；穿過圓環算；放在內側空腔（凹處）不算，證明不是外接框判斷", () => {
+  const e = B("elbow90", { id: "E", x: 0, y: 0, innerRadius: 150, width: 300 });
+  const atA = B("straight", { id: "S1", x: -500, y: 0, length: 500 });
+  const atB = B("straight", { id: "S2", x: 300, y: 300, rotation: 90, length: 500 });
+  assert.equal(CT.findOverlaps([e, atA, atB]).length, 0);
+  const through = B("straight", { id: "S3", width: 40, x: 162, y: 88, length: 100 });      // 圓環中線中點附近
+  assert.equal(CT.findOverlaps([e, through]).length, 1);
+  const hollow = B("straight", { id: "S4", width: 40, x: 20, y: 270, length: 100 });       // 內半徑之內
+  assert.equal(CT.findOverlaps([e, hollow]).length, 0);
+});
+test("Tee / Cross 內部兩根臂不互相比較；Auto Tee / Auto Cross 結果沒有任何重疊", () => {
+  assert.equal(CT.findOverlaps([B("tee", { id: "T" })]).length, 0);
+  assert.equal(CT.findOverlaps([B("cross", { id: "X" })]).length, 0);
+  assert.equal(CT.findOverlaps(tee([TM(), TS()]).blocks).length, 0);
+  assert.equal(CT.findOverlaps(tee([TM(), TS({ width: 150 })]).blocks).length, 0);
+  assert.equal(CT.findOverlaps(cross(xLayout()).blocks).length, 0);
+});
+test("Auto Tee：新增的 Tee / 延伸的 Branch 壓到別的 Tray → 擋下，輸入完全不變", () => {
+  // 障礙物在 Branch 原端點（y=-400）的外側，Branch 延伸到 y=-300 後才會與它重疊
+  const bl = [TM(), TS(), OB({ x: 1100, y: -350, length: 300 })];
+  assert.equal(CT.findOverlaps(bl).length, 0);
+  const snap = JSON.stringify([bl, []]);
+  const r = tee(bl);
+  assert.ok(hasCollision(r), r.reason);
+  assert.equal(JSON.stringify([bl, []]), snap);
+  assert.equal(CT.detectAutoTees(bl, []).proposals.length, 0); // 不會出現在偵測清單
+});
+test("Auto Elbow：彎頭壓到別的 Tray → 擋下", () => {
+  const P = B("straight", { id: "P", innerRadius: 150, length: 800 });
+  const Q = B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400 });
+  assert.ok(CT.commitAutoElbow([P, Q], [], "P:B", "Q:B").ok); // 沒有障礙物時可行
+  const bl = [P, Q, OB({ x: 850, y: 150, length: 100 })];
+  assert.equal(CT.findOverlaps(bl).length, 0);
+  const r = CT.commitAutoElbow(bl, [], "P:B", "Q:B");
+  assert.ok(hasCollision(r), r.reason);
+  assert.equal(CT.detectAutoElbows(bl, [], 90).proposals.length, 0);
+});
+test("Auto Reducer：變徑壓到別的 Tray → 擋下", () => {
+  assert.ok(CT.commitAutoReducer([RP(), RQ()], [], "P:B", "Q:A").ok);
+  const bl = [RP(), RQ(), OB({ x: 1200, y: 100, rotation: 90, length: 300 })];
+  assert.equal(CT.findOverlaps(bl).length, 0);
+  const r = CT.commitAutoReducer(bl, [], "P:B", "Q:A");
+  assert.ok(hasCollision(r), r.reason);
+});
+test("Auto Cross：Cross 壓到別的 Tray → 擋下", () => {
+  const bl = [...xLayout(), OB({ x: 1100, y: 250, length: 300 })];
+  assert.equal(CT.findOverlaps(bl).length, 0);
+  const r = cross(bl);
+  assert.ok(hasCollision(r), r.reason);
+  assert.equal(CT.detectAutoCrosses(bl, []).proposals.length, 0);
+});
+test("與提案無關、原本就存在的重疊不會讓提案失敗", () => {
+  const far = [OB({ id: "Z1", x: 0, y: 3000, length: 1000 }), OB({ id: "Z2", x: 500, y: 3000, length: 1000 })];
+  assert.equal(CT.findOverlaps(far).length, 1);
+  assert.ok(CT.commitAutoReducer([RP(), RQ(), ...far], [], "P:B", "Q:A").ok);
+  assert.ok(tee([TM(), TS(), ...far]).ok);
+});
+test("原 Main 既有的重疊會被拆出的 Main-1/2 繼承（derives），不算新增；但 Tee 自己壓到才算", () => {
+  const farOverlap = OB({ id: "Z", x: 1500, y: 0, length: 300, rotation: 90 }); // 壓在 Main 右段（離 Tee 很遠）
+  const bl = [TM(), TS(), farOverlap];
+  assert.equal(CT.findOverlaps(bl).length, 1); // 只有 Z 與 M
+  const r = tee(bl);
+  assert.ok(r.ok, r.reason);
+});
+test("範例資料本身沒有任何重疊（畫布上不會出現紅框）", () => {
+  assert.equal(CT.findOverlaps(CT.sampleBlocks()).length, 0);
+});
+test("範例資料：Elbow / Reducer / Tee 依序套用都不會產生新的重疊", () => {
+  let bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  const before = CT.findOverlaps(bl).length;
+  const e = CT.commitAutoElbow(bl, cn, "B8:B", "B9:B"); assert.ok(e.ok, e.reason); bl = e.blocks; cn = e.connections;
+  const r = CT.detectAutoReducers(bl, cn).proposals[0];
+  const c = CT.commitAutoReducer(bl, cn, r.sourceConnectors[0], r.sourceConnectors[1]); assert.ok(c.ok, c.reason); bl = c.blocks; cn = c.connections;
+  const t = CT.detectAutoTees(bl, cn).proposals[0];
+  const d = CT.commitAutoTee(bl, cn, t.sourceConnectors[0], t.mainId); assert.ok(d.ok, d.reason);
+  assert.equal(CT.findOverlaps(d.blocks).length, before);
 });
 
 console.log("Export");

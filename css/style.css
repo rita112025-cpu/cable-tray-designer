@@ -109,6 +109,7 @@ th { background: var(--chip); }
 .grid-dot { fill: var(--grid); }
 .shape { fill: var(--shape); stroke: var(--ink); }
 .shape.sel { fill: var(--shape-sel); }
+.shape.overlap { stroke: #ef4444; stroke-width: 4; }
 .svg-text { fill: var(--ink); }
 .junction { fill: var(--ink); stroke: var(--panel); }
 .blk { cursor: grab; }
