@@ -31,6 +31,7 @@
 | **v5.3** | **Auto Tee + Branch Reducer**：分支寬度與主線不同時，同一個 transaction 內一併插入 Reducer |
 | **v5.4** | **Auto Cross**：主線兩側各有一條分支、交在同一點 → 主線拆成兩段並插入四通 |
 | **v5.5** | **Overlap / Collision check**：所有 Auto* 提案在 commit 前檢查新增的實體輪廓重疊（共用於 `checkProposal`） |
+| **v5.6** | **同高程碰撞**：碰撞檢查只比較同 FFL 的元件；不同 FFL 不判定為 2D 碰撞 |
 
 ### Auto Elbow 90°（v4）
 
@@ -150,9 +151,22 @@ Elbow / Reducer / Tee / Cross 過去只保證「數學與連接合法」，新�
 - **處理方式**：直接擋下（與其他驗證一致）——不會出現在偵測清單，套用時失敗並顯示是哪兩個元件重疊，輸入完全不變。
 - **介面**：目前專案裡重疊的元件會在畫布上以紅色粗框標示；「路徑分析」分頁有「輪廓重疊」統計。
 
-限制：只比較平面輪廓，不考慮不同 FFL（高程）的元件其實可以上下疊放；目前所有元件一律視為同一平面。
+#### 高程（v5.6）
 
-後續規劃：Cross + 兩個 Branch Reducer、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
+碰撞檢查是「**同高程平面碰撞**」：
+
+```text
+if A.elevation !== B.elevation → 不判定為 2D 碰撞
+else                            → 做 polygon 重疊比較
+```
+
+- FFL 是正式資料欄位，連接驗證也用它判斷；XY 完全重合但 FFL 不同的兩條 Tray，在目前的資料模型裡本來就是不同平面，
+  若一律判為碰撞會產生明顯的假陽性（例如 +3000 與 +3600 上下疊放）。
+- **不代表不同 FFL 一定沒有 3D 干涉**：Tray 高度、支架、維修與垂直淨空都沒有建模，所以無法驗證上下淨空。
+- 刻意**不設**「FFL 差 < N mm 算碰撞」之類的門檻——沒有資料依據，只會是假精度。
+- 影響範圍：畫布紅框、路徑分析的「輪廓重疊」統計，以及四個 Auto* 提案的碰撞檢查，全部一致。
+
+後續規劃：v5.7 Cross + 兩個 Branch Reducer、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
 不檢查新元件的實體輪廓是否壓到其他 Tray）。
 
 ## 長度的定義
@@ -181,7 +195,7 @@ js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
 js/autoreducer.js   v5.0 Auto Reducer
 js/autotee.js       v5.2 Auto Tee（拆分主線）
 js/autocross.js     v5.4 Auto Cross
-js/collision.js     v5.5 輪廓重疊檢查（供 checkProposal 使用）
+js/collision.js     v5.5 輪廓重疊檢查（同 FFL；供 checkProposal 使用）
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料
 js/app.js           UI

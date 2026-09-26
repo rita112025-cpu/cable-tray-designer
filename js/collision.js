@@ -6,6 +6,9 @@
  * CT.checkProposal 在 commit 前一起套用（四個 Auto 功能不各自實作）。
  *
  * 判定規則：
+ *   - 只比較「同 FFL」的元件（同高程平面碰撞）。FFL 不同視為不同平面，不判定為碰撞。
+ *     這不代表不同 FFL 一定沒有 3D 干涉：Tray 高度、支架與垂直淨空都沒有建模，所以無法驗證上下淨空；
+ *     也不設「高程差多少算安全」的門檻（沒有資料依據，會是假精度）。
  *   - 只有「面積重疊」才算：兩個凸多邊形沿所有分離軸的穿透深度都 > OVERLAP_TOL（1 mm）。
  *     共邊 / 端點相接（穿透深度 ≈ 0）不算，所以已連接的相鄰元件不會誤報。
  *   - 同一元件內部不比較（Tee / Cross 的兩根臂本來就相交）。
@@ -76,13 +79,14 @@
     return best;
   };
 
-  /** 找出所有「面積重疊」的元件對：[{a, b, depth}]（同一元件內部不比較） */
+  /** 找出所有「同 FFL 且面積重疊」的元件對：[{a, b, depth}]（同一元件內部不比較） */
   CT.findOverlaps = function (blocks, tol = OVERLAP_TOL) {
     const boxes = blocks.map((b) => bbox(CT.collisionShapes(b)));
     const out = [];
     for (let i = 0; i < blocks.length; i++) {
       for (let j = i + 1; j < blocks.length; j++) {
         const p = boxes[i], q = boxes[j];
+        if (blocks[i].elevation !== blocks[j].elevation) continue; // 不同 FFL：不同平面，不判定為 2D 碰撞
         if (p.x1 <= q.x0 || q.x1 <= p.x0 || p.y1 <= q.y0 || q.y1 <= p.y0) continue; // 外接框沒交集，快速略過
         const depth = CT.blockPenetration(blocks[i], blocks[j]);
         if (depth > tol) out.push({ a: blocks[i].id, b: blocks[j].id, depth });

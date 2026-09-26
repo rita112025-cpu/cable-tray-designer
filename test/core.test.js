@@ -878,6 +878,47 @@ test("範例資料：Elbow / Reducer / Tee 依序套用都不會產生新的重�
   assert.equal(CT.findOverlaps(d.blocks).length, before);
 });
 
+console.log("Elevation-aware collision (v5.6)");
+test("XY 完全重疊但 FFL 不同 → 不算碰撞；同 FFL 才算", () => {
+  const a = B("straight", { id: "A", x: 0, y: 0, length: 1000, elevation: 3000 });
+  const same = B("straight", { id: "B", x: 200, y: 0, length: 1000, elevation: 3000 });
+  const diff = B("straight", { id: "B", x: 200, y: 0, length: 1000, elevation: 3600 });
+  assert.equal(CT.findOverlaps([a, same]).length, 1);
+  assert.equal(CT.findOverlaps([a, diff]).length, 0);
+});
+test("FFL 差多少都不設門檻：只要不同就不比較（1mm 也一樣）", () => {
+  const a = B("straight", { id: "A", x: 0, y: 0, length: 1000, elevation: 3000 });
+  const b = B("straight", { id: "B", x: 0, y: 0, length: 1000, elevation: 3001 });
+  assert.equal(CT.findOverlaps([a, b]).length, 0);
+});
+test("不同 FFL 的障礙物不會擋 Auto Tee / Reducer / Cross / Elbow；同 FFL 的障礙物仍會擋", () => {
+  const up = (o) => OB({ elevation: 3600, ...o });
+  // Tee
+  const tbl = (ob) => [TM(), TS(), ob({ x: 1100, y: -350, length: 300 })];
+  assert.ok(tee(tbl(up)).ok);
+  assert.ok(hasCollision(tee(tbl(OB))));
+  // Reducer
+  const rbl = (ob) => [RP(), RQ(), ob({ x: 1200, y: 100, rotation: 90, length: 300 })];
+  assert.ok(CT.commitAutoReducer(rbl(up), [], "P:B", "Q:A").ok);
+  assert.ok(hasCollision(CT.commitAutoReducer(rbl(OB), [], "P:B", "Q:A")));
+  // Cross
+  const xbl = (ob) => [...xLayout(), ob({ x: 1100, y: 250, length: 300 })];
+  assert.ok(cross(xbl(up)).ok);
+  assert.ok(hasCollision(cross(xbl(OB))));
+  // Elbow
+  const P = B("straight", { id: "P", innerRadius: 150, length: 800 });
+  const Q = B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400 });
+  const ebl = (ob) => [P, Q, ob({ x: 850, y: 150, length: 100 })];
+  assert.ok(CT.commitAutoElbow(ebl(up), [], "P:B", "Q:B").ok);
+  assert.ok(hasCollision(CT.commitAutoElbow(ebl(OB), [], "P:B", "Q:B")));
+});
+test("新增的重疊只看同 FFL：Tee 的 Main 與 Branch 同 FFL，遇到不同 FFL 的舊 Tray 不受影響", () => {
+  const under = OB({ id: "Zu", elevation: 2000, x: 0, y: -20, length: 2000, width: 300 }); // 正好在 Main 下方一層
+  const r = tee([TM(), TS(), under]);
+  assert.ok(r.ok, r.reason);
+  assert.equal(CT.findOverlaps(r.blocks).length, 0);
+});
+
 console.log("Export");
 test("DXF：AC1014、TRAY-LINK、無 AC1009 / TRAY-DIM / DIMENSION", () => {
   const bl = CT.sampleBlocks(); const dxf = CT.toDXF(bl, CT.sampleConnections());
