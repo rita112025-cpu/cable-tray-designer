@@ -84,7 +84,7 @@
    * A 端永遠是寬端：主線較寬 → A 接 Tee/Cross；分支較寬 → A 在分支側。
    * 回傳 { need, Lr, branchTip, reducer, mainWider, chain(fittingKey, branchKey) → 連接陣列 }
    */
-  CT.planBranchReducer = function ({ M, wBranch, Cpos, uS, dirC, id, trayId, label }) {
+  CT.planBranchReducer = function ({ M, wBranch, hBranch, Cpos, uS, dirC, id, trayId, label }) {
     const w = M.width;
     const need = wBranch !== w;
     const Lr = need ? CT.REDUCER_LEN : 0;
@@ -98,6 +98,7 @@
         ...M, id, trayId, type: "reducer", length: Lr,
         width: Math.max(w, wBranch), widthStart: Math.max(w, wBranch), widthEnd: Math.min(w, wBranch),
         x: CT.round2(start[0]), y: CT.round2(start[1]), rotation: CT.round2(mainWider ? dirC : CT.normDeg(dirC + 180)),
+        trayHeight: CT.combineHeight(M.trayHeight, hBranch), // 過渡件高度：兩側都有值取較大者，否則未知
         from: "", to: "", remark: `${label} 分支變徑`,
       };
       delete reducer.connectors;
@@ -157,7 +158,7 @@
     };
     const split = CT.splitMainPlan(M, connections, s, L, lId, rId, "Auto Tee");
     const { left, right } = split;
-    const plan = CT.planBranchReducer({ M, wBranch, Cpos, uS, dirC, id: dId, trayId: `RED-AUTO-${num}`, label: "Auto Tee" });
+    const plan = CT.planBranchReducer({ M, wBranch, hBranch: S.b.trayHeight, Cpos, uS, dirC, id: dId, trayId: `RED-AUTO-${num}`, label: "Auto Tee" });
     const { reducer, branchTip } = plan;
     const needReducer = plan.need;
     [tee, left, right, reducer].forEach((b) => { if (b) delete b.connectors; });

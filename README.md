@@ -33,6 +33,7 @@
 | **v5.5** | **Overlap / Collision check**：所有 Auto* 提案在 commit 前檢查新增的實體輪廓重疊（共用於 `checkProposal`） |
 | **v5.6** | **同高程碰撞**：碰撞檢查只比較同 FFL 的元件；不同 FFL 不判定為 2D 碰撞 |
 | **v5.7** | **Cross + Branch Reducer**：Cross 的兩條分支各自與主線不同寬時，該側自動加 Reducer（最多 2 個） |
+| **v5.8** | **Tray Height / Z 區間碰撞**：FFL 定義為 Tray 底面高程；設定 `trayHeight` 後，只有 XY 與 Z 區間都重疊才算 3D 碰撞 |
 
 ### Auto Elbow 90°（v4）
 
@@ -166,78 +167,30 @@ Elbow / Reducer / Tee / Cross 過去只保證「數學與連接合法」，新�
 - **處理方式**：直接擋下（與其他驗證一致）——不會出現在偵測清單，套用時失敗並顯示是哪兩個元件重疊，輸入完全不變。
 - **介面**：目前專案裡重疊的元件會在畫布上以紅色粗框標示；「路徑分析」分頁有「輪廓重疊」統計。
 
-#### 高程（v5.6）
+#### 高程與 Tray Height（v5.6 → v5.8）
 
-碰撞檢查是「**同高程平面碰撞**」：
+**欄位語意（重要）**：本工具中的 **FFL 欄位 = Tray 底面高程**（mm），**不是**建築的 Finished Floor Level（完成面標高）。
+內部欄位名維持 `elevation`（畫面標示為「FFL = Tray 底面高程」），以免破壞既有資料；匯出的 CSV 欄名為 `FFL(Tray底面高程)`。
+
+新增欄位 **`trayHeight`**（Tray 本體高度，mm，預設空白 = 未知）。兩個元件的垂直佔用區間：
 
 ```text
-if A.elevation !== B.elevation → 不判定為 2D 碰撞
-else                            → 做 polygon 重疊比較
+Zmin = FFL（Tray 底面高程）
+Zmax = FFL + trayHeight
 ```
 
-- FFL 是正式資料欄位，連接驗證也用它判斷；XY 完全重合但 FFL 不同的兩條 Tray，在目前的資料模型裡本來就是不同平面，
-  若一律判為碰撞會產生明顯的假陽性（例如 +3000 與 +3600 上下疊放）。
-- **不代表不同 FFL 一定沒有 3D 干涉**：Tray 高度、支架、維修與垂直淨空都沒有建模，所以無法驗證上下淨空。
-- 刻意**不設**「FFL 差 < N mm 算碰撞」之類的門檻——沒有資料依據，只會是假精度。
-- 影響範圍：畫布紅框、路徑分析的「輪廓重疊」統計，以及四個 Auto* 提案的碰撞檢查，全部一致。
+碰撞規則（`js/collision.js`）：
 
-後續規劃：資料模型補強（Tray Height / Clearance，讓碰撞檢查不只 2D + FFL）、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
-不檢查新元件的實體輪廓是否壓到其他 Tray）。
+| 兩個元件的 `trayHeight` | 垂直判斷 | 何時才可能碰撞 |
+| --- | --- | --- |
+| 都有設定（> 0） | Z 區間 `[FFL, FFL+H]` 重疊超過 1 mm | XY 輪廓重疊 **且** Z 區間重疊 |
+| 任一未設定 | 無法判斷 Z，沿用 v5.6：只比較同 FFL | XY 輪廓重疊 **且** FFL 相同 |
 
-## 長度的定義
+範例：`[2700, 2800]` 與 `[2750, 2850]` Z 重疊 50 mm，XY 也重疊 → 碰撞；`[2700, 2800]` 與 `[2850, 2950]` Z 不重疊，XY 即使完全重合也不算；頂面剛好等於底面（`2800`）視為相接，不算。
 
-- **元件 `length` 加總**：只是欄位相加，不是 Route 長度。
-- **中心線長度**：直線 / 變徑 = `length`；彎頭 = `(innerRadius + width/2) × 角度(rad)`（W300、內半徑 150、90° → 471 mm）；Tee / Cross 視為節點，權重 0。
-- **全專案中心線合計** ≠ 任何單一 Route。各 Route 的長度在「路徑分析」分頁分別列出。
+- 只有兩者都設定高度才啟用 Z 區間；**不會憑空假設任何預設高度**（沒有製造商 / 型錄依據），所以既有資料與範例行為完全不變。
+- Auto* 產生的新元件會繼承高度：Tee / Cross 與拆出的主線沿用 Main；Elbow / Reducer / 分支 Reducer 取兩側較大者，任一側未知則為未知。
+- 影響範圍：畫布紅框、路徑分析的「輪廓重疊」統計、四個 Auto* 提案的碰撞檢查，全部一致。
+- **仍未建模**：支架、維修空間與垂直淨空；不代表 Z 區間不重疊就一定沒有 3D 干涉。也沒有「高程差 < N mm 算碰撞」之類的門檻。
+- 元件屬性面板可輸入 Tray Height；留空 = 未設定。
 
-## DXF 匯出的範圍
-
-有：`LWPOLYLINE`（元件輪廓）、`TEXT`、`LINE`（Connection，圖層 `TRAY-LINK`）、`LAYER` 表；`$ACADVER = AC1014`。
-沒有：`BLOCK` / `INSERT` / `DIMENSION` / 3D / Z 值。FFL 只寫在文字標註內。
-
-BOM 只有數量與長度，**不含重量**（沒有製造商 / 型錄 / 材質依據）。
-
-## 專案結構
-
-```
-index.html          頁面
-css/style.css
-js/geometry.js      元件模型、Connector、中心線、輪廓
-js/graph.js         Graph 建模、Route DFS
-js/validator.js     Connection 驗證
-js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交（含 remove / replaces）
-js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
-js/autoreducer.js   v5.0 Auto Reducer
-js/autotee.js       v5.2 Auto Tee（拆分主線）
-js/autocross.js     v5.4 Auto Cross
-js/collision.js     v5.5 輪廓重疊檢查（同 FFL；供 checkProposal 使用）
-js/export.js        DXF / CSV / JSON
-js/sample.js        範例資料
-js/app.js           UI
-test/core.test.js   單元測試（Node 或瀏覽器）
-test/index.html     在瀏覽器執行測試
-```
-
-核心模組（`geometry / graph / validator / autoelbow / export`）沒有 DOM 相依，可單獨在 Node 執行。
-
-## 測試
-
-有 Node：
-
-```bash
-node test/core.test.js
-```
-
-沒有 Node：用瀏覽器開啟 `test/index.html`（標題顯示 PASS / FAIL）。若瀏覽器擋 `file://`，可先啟動簡易伺服器：
-
-```bash
-python -m http.server 8000
-```
-
-## 發佈到 GitHub Pages
-
-Repository → Settings → Pages → Source 選 `main` / root，網址即為 `https://<user>.github.io/<repo>/`。
-
-## 座標系
-
-SVG 座標（x 向右、y 向下），角度 0° = 向右、90° = 向下。DXF 匯出時 y 會取負值轉為 CAD 座標。

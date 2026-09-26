@@ -91,7 +91,7 @@
     const branchPlan = (S, hit, wb, idx) => {
       const Cpos = [J[0] - h * hit.uS[0], J[1] - h * hit.uS[1]]; // Cross 該端連接器位置
       return CT.planBranchReducer({
-        M, wBranch: wb, Cpos, uS: hit.uS, dirC: CT.normDeg(S.k.worldDir + 180),
+        M, wBranch: wb, hBranch: S.b.trayHeight, Cpos, uS: hit.uS, dirC: CT.normDeg(S.k.worldDir + 180),
         id: `CD${idx}-A${n}`, trayId: `RED-AUTO-${num}-${idx}`, label: "Auto Cross",
       });
     };

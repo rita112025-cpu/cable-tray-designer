@@ -21,6 +21,13 @@
   CT.normDeg = normDeg;
   CT.angleBetween = angleBetween;
 
+  /** Tray 高度是否已設定（> 0 才視為有效） */
+  CT.hasHeight = (b) => Number.isFinite(b.trayHeight) && b.trayHeight > 0;
+  /** 兩個元件之間的過渡件（Elbow / Reducer）高度：兩邊都有值取較大者，任一未知則未知 */
+  CT.combineHeight = (a, b) => (a > 0 && b > 0 ? Math.max(a, b) : null);
+  /** Z 區間：底面 = elevation，頂面 = elevation + trayHeight；高度未知回傳 null */
+  CT.zRange = (b) => (CT.hasHeight(b) ? [b.elevation, b.elevation + b.trayHeight] : null);
+
   /** 彎頭中心線半徑 Rc = 內半徑 + 寬度/2 */
   CT.centerlineRadius = (b) => b.innerRadius + b.width / 2;
 
@@ -113,7 +120,8 @@
       rotation: 0,
       x: 0,
       y: 0,
-      elevation: 2700,
+      elevation: 2700, // 本工具中的 FFL 欄位 = Tray 底面高程（mm）
+      trayHeight: null, // Tray 本體高度（mm）；null / 0 = 未知，碰撞檢查沿用「同 FFL」規則
       from: "",
       to: "",
       remark: "",

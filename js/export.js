@@ -28,7 +28,7 @@
         put(0, "LWPOLYLINE", 8, layer, 90, poly.length, 70, 1);
         poly.forEach(([x, y]) => put(10, x.toFixed(2), 20, (-y).toFixed(2))); // SVG y 向下 → CAD y 向上
       });
-      const label = `${b.trayId} W${b.type === "reducer" ? `${b.widthStart}>${b.widthEnd}` : b.width} FFL+${b.elevation} [${b.system}]${b.from || b.to ? ` ${b.from}>${b.to}` : ""}`;
+      const label = `${b.trayId} W${b.type === "reducer" ? `${b.widthStart}>${b.widthEnd}` : b.width} FFL+${b.elevation}${CT.hasHeight(b) ? ` H${b.trayHeight}` : ""} [${b.system}]${b.from || b.to ? ` ${b.from}>${b.to}` : ""}`;
       put(0, "TEXT", 8, "TRAY-TEXT", 10, b.x.toFixed(2), 20, (-(b.y - b.width / 2 - 30)).toFixed(2), 40, 40, 1, label);
     });
     connections.forEach((c) => {
@@ -47,12 +47,12 @@
   };
 
   CT.toCSV = function (blocks) {
-    const head = ["Tray ID", "Type", "System", "WidthStart", "WidthEnd", "Length(mm)", "CenterlineLength(mm)", "FFL", "From", "To", "Remark"];
+    const head = ["Tray ID", "Type", "System", "WidthStart", "WidthEnd", "Length(mm)", "CenterlineLength(mm)", "FFL(Tray底面高程)", "TrayHeight", "From", "To", "Remark"];
     const rows = blocks.map((b) => [
       b.trayId, b.type, b.system,
       b.type === "reducer" ? b.widthStart : b.width,
       b.type === "reducer" ? b.widthEnd : b.width,
-      b.length, CT.centerlineLength(b).toFixed(3), b.elevation, b.from, b.to, b.remark,
+      b.length, CT.centerlineLength(b).toFixed(3), b.elevation, CT.hasHeight(b) ? b.trayHeight : "", b.from, b.to, b.remark,
     ]);
     // 加 BOM 讓 Excel 正確辨識 UTF-8
     return "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");

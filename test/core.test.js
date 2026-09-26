@@ -1051,6 +1051,93 @@ test("Loop 不增加、subgraph 不惡化；成功時輸入不被修改", () => 
   assert.equal(JSON.stringify([bl, []]), snap);
 });
 
+console.log("Tray Height / Z-interval collision (v5.8)");
+// FFL 欄位 = Tray 底面高程；Z 區間 = [FFL, FFL + trayHeight]
+const H = (id, elev, h, o = {}) => B("straight", { id, x: 0, y: 0, length: 1000, elevation: elev, trayHeight: h, ...o });
+
+test("預設 trayHeight = null，沿用 v5.6 規則（同 FFL 才比較）", () => {
+  assert.equal(B("straight").trayHeight, null);
+  assert.equal(CT.findOverlaps([H("A", 2700, null), H("B", 2700, null, { x: 200 })]).length, 1);
+  assert.equal(CT.findOverlaps([H("A", 2700, null), H("B", 2750, null, { x: 200 })]).length, 0);
+});
+test("Z 區間重疊 50mm + XY 重疊 → 3D collision（FFL 不同也算）", () => {
+  const o = CT.findOverlaps([H("A", 2700, 100), H("B", 2750, 100, { x: 200 })]);
+  assert.equal(o.length, 1); near(o[0].zOverlap, 50);
+});
+test("Z 區間不重疊：XY 完全重合也不算碰撞（[2700,2800] vs [2850,2950]）", () => {
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2850, 100)]).length, 0);
+});
+test("Z 剛好相接（頂面 = 底面）或只重疊 ≤ 1mm → 不算", () => {
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2800, 100)]).length, 0);
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2799.5, 100)]).length, 0);
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2790, 100)]).length, 1);
+});
+test("高度較大的 Tray 可與 FFL 不同的 Tray 相交：[2700,3000] vs [2900,3200]", () => {
+  assert.equal(CT.findOverlaps([H("A", 2700, 300), H("B", 2900, 300)]).length, 1);
+});
+test("只有一邊有高度：無法判斷 Z，回到 v5.6（同 FFL 才比較）", () => {
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2700, null)]).length, 1);
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2900, null)]).length, 0);
+});
+test("高度 0 / 負值 / 非數字視為未設定", () => {
+  [0, -50, NaN, undefined].forEach((h) => assert.equal(CT.hasHeight({ trayHeight: h }), false));
+  assert.equal(CT.hasHeight({ trayHeight: 100 }), true);
+  assert.equal(CT.findOverlaps([H("A", 2700, 100), H("B", 2900, 0)]).length, 0);
+});
+test("Auto Tee：障礙物 Z 區間重疊 → 擋；Z 不重疊 → 不擋（即使 FFL 不同或相近）", () => {
+  const hs = { trayHeight: 100 };
+  const tbl = (ob) => [TM(hs), TS(hs), ob];
+  const blocked = OB({ x: 1100, y: -350, length: 300, elevation: 2750, trayHeight: 100 }); // Z [2750,2850] 與 [2700,2800] 重疊
+  const clear = OB({ x: 1100, y: -350, length: 300, elevation: 2850, trayHeight: 100 });   // Z [2850,2950] 不重疊
+  assert.ok(hasCollision(tee(tbl(blocked))));
+  assert.ok(tee(tbl(clear)).ok);
+});
+test("Auto Elbow / Reducer / Cross 同樣依 Z 區間判斷", () => {
+  const hs = { trayHeight: 100 };
+  const obst = (elev) => ({ elevation: elev, trayHeight: 100 });
+  const P = B("straight", { id: "P", innerRadius: 150, length: 800, ...hs });
+  const Q = B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400, ...hs });
+  assert.ok(hasCollision(CT.commitAutoElbow([P, Q, OB({ x: 850, y: 150, length: 100, ...obst(2750) })], [], "P:B", "Q:B")));
+  assert.ok(CT.commitAutoElbow([P, Q, OB({ x: 850, y: 150, length: 100, ...obst(2850) })], [], "P:B", "Q:B").ok);
+  const rbl = (e) => [RP(hs), RQ(hs), OB({ x: 1200, y: 100, rotation: 90, length: 300, ...obst(e) })];
+  assert.ok(hasCollision(CT.commitAutoReducer(rbl(2750), [], "P:B", "Q:A")));
+  assert.ok(CT.commitAutoReducer(rbl(2850), [], "P:B", "Q:A").ok);
+  const xbl = (e) => [TM(hs), TS(hs), XS2(hs), OB({ x: 1100, y: 250, length: 300, ...obst(e) })];
+  assert.ok(hasCollision(cross(xbl(2750))));
+  assert.ok(cross(xbl(2850)).ok);
+});
+test("Auto* 新元件繼承高度：Tee/Cross 與拆出的主線沿用 Main；Elbow / Reducer / Branch Reducer 取兩側較大者，任一未知則未知", () => {
+  const r = tee([TM({ trayHeight: 100 }), TS({ trayHeight: 100 })]);
+  assert.ok(r.blocks.every((b) => b.trayHeight === 100));
+  const rr = tee([TM({ trayHeight: 100, width: 300 }), TS({ trayHeight: 150, width: 150 })]);
+  assert.equal(rr.blocks.find((b) => b.type === "reducer").trayHeight, 150);
+  const un = tee([TM({ trayHeight: 100 }), TS({ width: 150 })]);
+  assert.equal(un.blocks.find((b) => b.type === "reducer").trayHeight, null);
+  const cr = cross(xLayout({ trayHeight: 100, width: 150 }, { trayHeight: 100 }).map((b) => (b.id === "M" ? CT.refresh({ ...b, trayHeight: 100 }) : b)));
+  assert.ok(cr.ok, cr.reason);
+  assert.equal(cr.blocks.find((b) => b.type === "cross").trayHeight, 100);
+  const red = CT.commitAutoReducer([RP({ trayHeight: 100 }), RQ({ trayHeight: 80 })], [], "P:B", "Q:A");
+  assert.equal(red.blocks.find((b) => b.type === "reducer").trayHeight, 100);
+  const el = CT.commitAutoElbow([B("straight", { id: "P", innerRadius: 150, length: 800, trayHeight: 100 }), B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400 })], [], "P:B", "Q:B");
+  assert.equal(el.blocks.find((b) => b.type === "elbow90").trayHeight, null);
+});
+test("輸出：CSV 有 FFL(Tray底面高程) 與 TrayHeight 欄位；JSON 保留 trayHeight；DXF 文字含 H", () => {
+  const bl = [H("A", 2700, 120), H("B", 2700, null, { x: 2000 })];
+  const csv = CT.toCSV(bl).split("\n");
+  assert.ok(csv[0].includes("FFL(Tray底面高程)") && csv[0].includes("TrayHeight"));
+  assert.ok(csv[1].includes(",2700,120,")); assert.ok(csv[2].includes(",2700,,"));
+  assert.ok(JSON.parse(CT.toJSON(bl, [], CT.buildGraph(bl, []))).blocks[0].trayHeight === 120);
+  assert.ok(CT.toDXF(bl, []).includes("FFL+2700 H120"));
+});
+test("範例資料未設定 trayHeight，行為與 v5.7 完全相同（無重疊、各偵測 1 組）", () => {
+  const bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  assert.ok(bl.every((b) => b.trayHeight === null));
+  assert.equal(CT.findOverlaps(bl).length, 0);
+  assert.equal(CT.detectAutoElbows(bl, cn).proposals.length, 1);
+  assert.equal(CT.detectAutoReducers(bl, cn).proposals.length, 1);
+  assert.equal(CT.detectAutoTees(bl, cn).proposals.length, 1);
+});
+
 console.log("Export");
 test("DXF：AC1014、TRAY-LINK、無 AC1009 / TRAY-DIM / DIMENSION", () => {
   const bl = CT.sampleBlocks(); const dxf = CT.toDXF(bl, CT.sampleConnections());

@@ -153,7 +153,8 @@
       ${b.type === "straight" || b.type === "reducer" || b.type === "tee" || b.type === "cross" ? num("長度 Length", "length") : ""}
       ${b.type.startsWith("elbow") ? num("內半徑 InnerRadius", "innerRadius") + num("彎角 BendAngle", "bendAngle") : ""}
       ${num("旋轉 Rotation°", "rotation")}
-      ${num("FFL (mm)", "elevation")}
+      ${num("FFL = Tray 底面高程 (mm)", "elevation")}
+      <label>Tray Height 高度 (mm)<input type="number" min="0" data-prop="trayHeight" value="${b.trayHeight ?? ""}" placeholder="未設定"></label>
       ${txt("Route From", "from")}${txt("Route To", "to")}
       <label class="full">Remark<input data-prop="remark" data-text="1" value="${esc(b.remark)}"></label>
     </div>`;
@@ -423,7 +424,8 @@
     const key = el.dataset.prop;
     if (el.dataset.text) return updateSelected(key, el.value);
     const v = parseFloat(el.value);
-    updateSelected(key, Number.isFinite(v) ? v : 0);
+    if (key === "trayHeight") updateSelected(key, Number.isFinite(v) && v > 0 ? v : null); // 空白 = 未設定
+    else updateSelected(key, Number.isFinite(v) ? v : 0);
     setState({ proposals: [], previewId: null });
   });
 

@@ -159,7 +159,7 @@
 
     // 實體輪廓：只擋提案「新增」的面積重疊（見 collision.js）
     if (CT.newOverlaps) {
-      CT.newOverlaps(blocks, sim.blocks, pr.derives || {}).forEach((o) => errs.push(`collision：${o.a} 與 ${o.b} 輪廓重疊（穿透 ${o.depth.toFixed(1)}mm）`));
+      CT.newOverlaps(blocks, sim.blocks, pr.derives || {}).forEach((o) => errs.push(`collision：${o.a} 與 ${o.b} 輪廓重疊（穿透 ${o.depth.toFixed(1)}mm${o.zOverlap != null ? `，Z 重疊 ${o.zOverlap.toFixed(0)}mm` : ""}）`));
     }
 
     return { errs, blocks: sim.blocks, connections: sim.connections };

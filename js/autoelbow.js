@@ -91,7 +91,7 @@
       id: eid, trayId: `ELBOW-AUTO-${String(n).padStart(3, "0")}`, type: `elbow${angle}`,
       system: X.b.system, width: w, widthStart: w, widthEnd: w, length: 600,
       innerRadius: X.b.innerRadius, bendAngle: angle, rotation: r2(X.k.worldDir),
-      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, from: "", to: "", remark: `自動插入 ${angle}° 彎頭`,
+      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, trayHeight: CT.combineHeight(X.b.trayHeight, Y.b.trayHeight), from: "", to: "", remark: `自動插入 ${angle}° 彎頭`,
     };
     const update = CT.tipUpdate;
 

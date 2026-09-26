@@ -74,7 +74,7 @@
       id: rid, trayId: `RED-AUTO-${String(n).padStart(3, "0")}`, type: "reducer",
       system: X.b.system, width: wX, widthStart: wX, widthEnd: wY, length: REDUCER_LEN,
       innerRadius: X.b.innerRadius, bendAngle: 90, rotation: r2(X.k.worldDir),
-      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, from: "", to: "", remark: "v5 自動插入變徑",
+      x: r2(A[0]), y: r2(A[1]), elevation: X.b.elevation, trayHeight: CT.combineHeight(X.b.trayHeight, Y.b.trayHeight), from: "", to: "", remark: "v5 自動插入變徑",
     };
 
     return {
