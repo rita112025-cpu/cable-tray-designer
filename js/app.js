@@ -93,7 +93,14 @@
 
     // Auto Elbow 預覽
     const pr = state.proposals.find((p) => p.id === state.previewId);
-    if (pr && pr.type === "AUTO_TEE") {
+    if (pr && pr.type === "AUTO_CROSS") {
+      const G = pr.geometry;
+      const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+      parts.push(`<g pointer-events="none">${ghost}
+        <line x1="${G.pS1[0]}" y1="${G.pS1[1]}" x2="${G.pS2[0]}" y2="${G.pS2[1]}" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 8"/>
+        <circle cx="${G.J[0]}" cy="${G.J[1]}" r="12" fill="#ef4444"/>
+        <text x="${G.J[0] + 18}" y="${G.J[1] - 14}" font-size="26" font-weight="700" fill="#ef4444">J・Cross ${G.L}×${G.L}mm・主線拆成 ${pr.info.lenL.toFixed(0)} + ${pr.info.lenR.toFixed(0)}</text></g>`);
+    } else if (pr && pr.type === "AUTO_TEE") {
       const G = pr.geometry;
       const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
       parts.push(`<g pointer-events="none">${ghost}
@@ -166,6 +173,13 @@
   /** 每種 proposal 的顯示文字 */
   function describe(p) {
     const i = p.info;
+    if (p.type === "AUTO_CROSS") {
+      return {
+        title: `四通：${p.sourceConnectors[0]} + ${p.sourceConnectors[1]} → 主線 ${p.mainId}`,
+        line1: `W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ Cross ${p.geometry.L}×${p.geometry.L}mm ｜ 分支到主線 t1=${p.geometry.t1.toFixed(0)} t2=${p.geometry.t2.toFixed(0)}mm`,
+        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR}（拆成兩段） ・ ${esc(i.trayBranch1)} ${i.oldLenBranch1}→${i.newLenBranch1} ・ ${esc(i.trayBranch2)} ${i.oldLenBranch2}→${i.newLenBranch2} ・ +1 cross ・ +${i.newConnections} connections`,
+      };
+    }
     if (p.type === "AUTO_TEE") {
       return {
         title: `三通：${p.sourceConnectors[0]} → 主線 ${p.mainId}`,
@@ -307,10 +321,11 @@
     const detectors = {
       reducer: () => CT.detectAutoReducers(state.blocks, state.connections),
       tee: () => CT.detectAutoTees(state.blocks, state.connections),
+      cross: () => CT.detectAutoCrosses(state.blocks, state.connections),
     };
     const { proposals, notes } = (detectors[kind] || (() => CT.detectAutoElbows(state.blocks, state.connections, angle)))();
     setState({ proposals, previewId: proposals[0] ? proposals[0].id : null });
-    const what = kind === "reducer" ? "變徑" : kind === "tee" ? "三通" : `${angle}° 彎頭`;
+    const what = kind === "reducer" ? "變徑" : kind === "tee" ? "三通" : kind === "cross" ? "四通" : `${angle}° 彎頭`;
     if (proposals.length) toast(`偵測到 ${proposals.length} 個可插入${what}的位置`);
     else toast(`未偵測到可插入${what}的位置` + (notes.length ? "：" + notes[0] : ""), true);
   }
@@ -319,7 +334,8 @@
     if (!pr) return;
     // 以目前狀態重新 build + validate；成功才一次 setState（blocks + connections 同時更新）
     const [ka, kb] = pr.sourceConnectors;
-    const r = pr.type === "AUTO_TEE" ? CT.commitAutoTee(state.blocks, state.connections, ka, pr.mainId)
+    const r = pr.type === "AUTO_CROSS" ? CT.commitAutoCross(state.blocks, state.connections, ka, kb, pr.mainId)
+      : pr.type === "AUTO_TEE" ? CT.commitAutoTee(state.blocks, state.connections, ka, pr.mainId)
       : pr.type === "AUTO_REDUCER" ? CT.commitAutoReducer(state.blocks, state.connections, ka, kb)
       : CT.commitAutoElbow(state.blocks, state.connections, ka, kb, pr.geometry.angle);
     if (!r.ok) {
@@ -329,7 +345,9 @@
     const i = r.proposal.info;
     const el = r.proposal.addBlocks[0];
     setState({ blocks: r.blocks, connections: r.connections, proposals: [], previewId: null, selectedId: el.id });
-    toast(pr.type === "AUTO_TEE"
+    toast(pr.type === "AUTO_CROSS"
+      ? `已插入 ${el.trayId}；主線 ${i.trayMain} 拆成 ${i.lenL} + ${i.lenR}，${i.trayBranch1} ${i.oldLenBranch1}→${i.newLenBranch1}，${i.trayBranch2} ${i.oldLenBranch2}→${i.newLenBranch2}`
+      : pr.type === "AUTO_TEE"
       ? `已插入 ${el.trayId}；主線 ${i.trayMain} 拆成 ${i.lenL} + ${i.lenR}，${i.trayBranch} ${i.oldLenBranch}→${i.newLenBranch}`
       : `已插入 ${el.trayId}；${i.trayX} ${i.oldLenX}→${i.newLenX}，${i.trayY} ${i.oldLenY}→${i.newLenY}`);
   }
@@ -404,6 +422,7 @@
   $("btn-detect-45").addEventListener("click", () => detect("elbow45"));
   $("btn-detect-reducer").addEventListener("click", () => detect("reducer"));
   $("btn-detect-tee").addEventListener("click", () => detect("tee"));
+  $("btn-detect-cross").addEventListener("click", () => detect("cross"));
   $("btn-dxf").addEventListener("click", () => download(CT.toDXF(state.blocks, state.connections), "cable-tray-sketch-AC1014.dxf", "application/dxf"));
   $("btn-csv").addEventListener("click", () => download(CT.toCSV(state.blocks), "bom.csv", "text/csv;charset=utf-8"));
   $("btn-json").addEventListener("click", () => download(CT.toJSON(state.blocks, state.connections, CT.buildGraph(state.blocks, state.connections)), "graph.json", "application/json"));

@@ -29,6 +29,7 @@
 | v5.2a | **Transaction 升級**：proposal 支援 `removeBlocks` / `removeConnections` / `replaces`（既有連接改接） |
 | **v5.2** | **Auto Tee**：分支端點垂直朝向另一條直線的中段 → 主線拆成兩段並插入三通 |
 | **v5.3** | **Auto Tee + Branch Reducer**：分支寬度與主線不同時，同一個 transaction 內一併插入 Reducer |
+| **v5.4** | **Auto Cross**：主線兩側各有一條分支、交在同一點 → 主線拆成兩段並插入四通 |
 
 ### Auto Elbow 90°（v4）
 
@@ -114,7 +115,28 @@ Main W300
 - 同寬時維持 v5.2 的行為，不會多加 Reducer。
 - 寬度是否匹配仍由既有的 `CT.validateConnections` 判定（新增 4 條連接皆需 Valid）。
 
-後續規劃：v5.4 Auto Cross、v5.5 Overlap / collision check（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
+### Auto Cross（v5.4）
+
+```text
+             Branch-1                        Branch-1
+                │                               │C
+Main ───────────┼───────────  →   Main-1 ──[A CROSS B]── Main-2
+                │                               │D
+             Branch-2                        Branch-2
+```
+
+沿用 Tee 的做法與共用 transaction 契約（`transaction.js` 沒有為它改動）：移除原 Main，新增 Cross / Main-1 / Main-2，
+兩條 Branch 修到 Cross:C / Cross:D，建立 4 條新連接，並把原 Main 兩端既有的連接「替換」到 Main-1:A / Main-2:B。
+
+- 條件：Main 與兩條 Branch 皆為 Straight，**同寬**、同 System / FFL；兩條 Branch 都與 Main 成 90°、彼此反向，
+  且指向主線上的同一點（容差 0.5 mm）；兩個分支端點都是 free。
+- Cross 長 = 高 = 2 × 寬度（W300 → 600 × 600），中心在交點 J；Main-1 / Main-2 與兩條 Branch 調整後都需 ≥ 100 mm。
+- 兩條 Branch 在主線哪一側由方向自動判斷（+y 側接 D、−y 側接 C），傳入順序不影響結果。
+- 「Cross + 兩個 Branch Reducer」尚未支援；分支寬度與主線不同時會回報原因並拒絕。
+- 偵測十字配置時，「偵測 三通」也會分別列出兩條分支各自的 Tee 方案；選其中一個即可，套用 Cross 後兩者都會消失。
+- 範例資料沒有 Cross 候選（放進去會讓範例的 Tee 偵測變成 2 組）；要試的話，在主線兩側各放一條垂直、端點朝向同一點的直線。
+
+後續規劃：v5.5 Overlap / collision check（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
 不檢查新元件的實體輪廓是否壓到其他 Tray）。
 
 ## 長度的定義
@@ -142,6 +164,7 @@ js/transaction.js   Auto* 共用：模擬 / 通用驗證 / 提交（含 remove /
 js/autoelbow.js     Auto Elbow 90° / 45°（proposal / validate / commit）
 js/autoreducer.js   v5.0 Auto Reducer
 js/autotee.js       v5.2 Auto Tee（拆分主線）
+js/autocross.js     v5.4 Auto Cross
 js/export.js        DXF / CSV / JSON
 js/sample.js        範例資料
 js/app.js           UI
