@@ -32,6 +32,7 @@
 | **v5.4** | **Auto Cross**：主線兩側各有一條分支、交在同一點 → 主線拆成兩段並插入四通 |
 | **v5.5** | **Overlap / Collision check**：所有 Auto* 提案在 commit 前檢查新增的實體輪廓重疊（共用於 `checkProposal`） |
 | **v5.6** | **同高程碰撞**：碰撞檢查只比較同 FFL 的元件；不同 FFL 不判定為 2D 碰撞 |
+| **v5.7** | **Cross + Branch Reducer**：Cross 的兩條分支各自與主線不同寬時，該側自動加 Reducer（最多 2 個） |
 
 ### Auto Elbow 90°（v4）
 
@@ -130,13 +131,27 @@ Main ───────────┼───────────  → 
 沿用 Tee 的做法與共用 transaction 契約（`transaction.js` 沒有為它改動）：移除原 Main，新增 Cross / Main-1 / Main-2，
 兩條 Branch 修到 Cross:C / Cross:D，建立 4 條新連接，並把原 Main 兩端既有的連接「替換」到 Main-1:A / Main-2:B。
 
-- 條件：Main 與兩條 Branch 皆為 Straight，**同寬**、同 System / FFL；兩條 Branch 都與 Main 成 90°、彼此反向，
+- 條件：Main 與兩條 Branch 皆為 Straight，同 System / FFL（寬度可不同，見下一節）；兩條 Branch 都與 Main 成 90°、彼此反向，
   且指向主線上的同一點（容差 0.5 mm）；兩個分支端點都是 free。
 - Cross 長 = 高 = 2 × 寬度（W300 → 600 × 600），中心在交點 J；Main-1 / Main-2 與兩條 Branch 調整後都需 ≥ 100 mm。
 - 兩條 Branch 在主線哪一側由方向自動判斷（+y 側接 D、−y 側接 C），傳入順序不影響結果。
-- 「Cross + 兩個 Branch Reducer」尚未支援；分支寬度與主線不同時會回報原因並拒絕。
 - 偵測十字配置時，「偵測 三通」也會分別列出兩條分支各自的 Tee 方案；選其中一個即可，套用 Cross 後兩者都會消失。
 - 範例資料沒有 Cross 候選（放進去會讓範例的 Tee 偵測變成 2 組）；要試的話，在主線兩側各放一條垂直、端點朝向同一點的直線。
+
+### Cross + Branch Reducer（v5.7）
+
+只改 Auto Cross，沒有動 transaction 契約，也沒有改碰撞規則。Cross 本體一律用 Main 寬度；兩條 Branch **各自獨立**判斷：
+
+| Branch 與 Main | 該側的處理 | Branch 新長度 |
+| --- | --- | --- |
+| 同寬 | 直接接 Cross:C / D，不加 Reducer | 原長 + t − L/2 |
+| 不同寬 | 加 1 個 Reducer（`CT.REDUCER_LEN` = 300 mm） | 原長 + t − L/2 − 300 |
+
+- Reducer 的 A 端永遠是寬端：Main 較寬 → `Cross → Reducer:A → Reducer:B → Branch`；Branch 較寬 → `Cross → Reducer:B → Reducer:A → Branch`。
+- 最多 2 個 Reducer（兩側都不同寬）。任一側新長度 < 100 mm，**整筆 proposal 失敗**，不會只放棄其中一側的 Reducer。
+- 仍然是同一個 transaction：移除 Main → 更新兩條 Branch → 新增 Main-1 / Main-2 / Cross / Reducer → 替換 Main 兩端既有連接 → 新增連接 → `checkProposal` → commit 或 rollback。
+- 預覽會連 Reducer 一起畫出來，與實際 commit 的內容一致；proposal 文字會列出每條 Branch 是 `direct` 還是 `Reducer W…→W…`。
+- Tee 與 Cross 共用 `CT.planBranchReducer`，Reducer 的方向與連接邏輯只有一份。
 
 ### 重疊 / 碰撞檢查（v5.5）
 
@@ -166,7 +181,7 @@ else                            → 做 polygon 重疊比較
 - 刻意**不設**「FFL 差 < N mm 算碰撞」之類的門檻——沒有資料依據，只會是假精度。
 - 影響範圍：畫布紅框、路徑分析的「輪廓重疊」統計，以及四個 Auto* 提案的碰撞檢查，全部一致。
 
-後續規劃：v5.7 Cross + 兩個 Branch Reducer、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
+後續規劃：資料模型補強（Tray Height / Clearance，讓碰撞檢查不只 2D + FFL）、支路自動路由。（目前 Elbow / Reducer / Tee 都只檢查數學上合法，
 不檢查新元件的實體輪廓是否壓到其他 Tray）。
 
 ## 長度的定義

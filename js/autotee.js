@@ -77,6 +77,37 @@
     return { left, right, J, m, removeConnections, replaced };
   };
 
+  /**
+   * 分支寬度與主線不同時，在「Tee/Cross 的分支端」與分支之間放一個 Reducer（Tee / Cross 共用）。
+   *   Cpos：分支 connector 在 Tee/Cross 上的位置；uS：分支朝外方向單位向量（指向主線）；
+   *   dirC：Tee/Cross 該端朝向分支的角度；wBranch：分支有效寬。
+   * A 端永遠是寬端：主線較寬 → A 接 Tee/Cross；分支較寬 → A 在分支側。
+   * 回傳 { need, Lr, branchTip, reducer, mainWider, chain(fittingKey, branchKey) → 連接陣列 }
+   */
+  CT.planBranchReducer = function ({ M, wBranch, Cpos, uS, dirC, id, trayId, label }) {
+    const w = M.width;
+    const need = wBranch !== w;
+    const Lr = need ? CT.REDUCER_LEN : 0;
+    const dB = [-uS[0], -uS[1]];
+    const branchTip = [Cpos[0] + Lr * dB[0], Cpos[1] + Lr * dB[1]];
+    const mainWider = w > wBranch;
+    let reducer = null;
+    if (need) {
+      const start = mainWider ? Cpos : branchTip;
+      reducer = {
+        ...M, id, trayId, type: "reducer", length: Lr,
+        width: Math.max(w, wBranch), widthStart: Math.max(w, wBranch), widthEnd: Math.min(w, wBranch),
+        x: CT.round2(start[0]), y: CT.round2(start[1]), rotation: CT.round2(mainWider ? dirC : CT.normDeg(dirC + 180)),
+        from: "", to: "", remark: `${label} 分支變徑`,
+      };
+      delete reducer.connectors;
+    }
+    const chain = (fittingKey, branchKey) => (need
+      ? [{ from: fittingKey, to: `${id}:${mainWider ? "A" : "B"}` }, { from: `${id}:${mainWider ? "B" : "A"}`, to: branchKey }]
+      : [{ from: fittingKey, to: branchKey }]);
+    return { need, Lr, branchTip, reducer, mainWider, chain };
+  };
+
   CT.buildTeeProposal = function (blocks, connections, branchKey, mainId) {
     const S = CT.endpointOf(blocks, branchKey);
     const M = blocks.find((b) => b.id === mainId);
@@ -89,8 +120,6 @@
     if (S.b.elevation !== M.elevation) return { ok: false, stage: "attr", reason: `FFL 不一致 +${S.b.elevation} vs +${M.elevation}` };
     const w = M.width; // Tee 本體以主線寬度為準
     const wBranch = CT.effectiveWidth(S.b, S.k.id);
-    const needReducer = wBranch !== w; // 分支不同寬 → 在 Tee:C 與分支之間加一個 Reducer（不做特殊的三種寬度 Tee）
-    const Lr = needReducer ? CT.REDUCER_LEN : 0;
 
     if (Math.abs(CT.angleBetween(S.k.worldDir, M.rotation) - 90) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: "分支與主線不是 90°" };
 
@@ -105,6 +134,7 @@
     const h = L / 2;
     const lenL = s - h;
     const lenR = M.length - s - h;
+    const Lr = wBranch !== w ? CT.REDUCER_LEN : 0; // 分支不同寬 → 在 Tee:C 與分支之間加一個 Reducer（不做特殊的三種寬度 Tee）
     const newLenS = S.b.length + t - h - Lr;
     if (s < 0 || s > M.length) return { ok: false, stage: "geom", reason: `交點在主線之外（s=${s.toFixed(0)}, 主線長 ${M.length}）` };
     if (lenL < MIN_LEN || lenR < MIN_LEN) return { ok: false, stage: "geom", reason: `交點太靠近主線端點：Main-L ${lenL.toFixed(0)} / Main-R ${lenR.toFixed(0)}（需 ≥ ${MIN_LEN}mm，Tee 長 ${L}mm）` };
@@ -115,8 +145,6 @@
     const rot = CT.normDeg(dirC - 90);
     const uT = [Math.cos(CT.rad(rot)), Math.sin(CT.rad(rot))];
     const Cpos = [J[0] - h * uS[0], J[1] - h * uS[1]];
-    const dB = [-uS[0], -uS[1]]; // Tee 朝分支的方向
-    const branchTip = [Cpos[0] + Lr * dB[0], Cpos[1] + Lr * dB[1]]; // 分支新端點（有 Reducer 時在 Reducer 外側）
 
     let n = 1;
     while (["TE-A", "TL-A", "TR-A", "TD-A"].some((p) => blocks.some((b) => b.id === `${p}${n}`))) n++;
@@ -129,18 +157,9 @@
     };
     const split = CT.splitMainPlan(M, connections, s, L, lId, rId, "Auto Tee");
     const { left, right } = split;
-    // Reducer：A 端永遠是寬端。主線較寬 → A 接 Tee:C；分支較寬 → A 在分支側
-    let reducer = null;
-    if (needReducer) {
-      const mainWider = w > wBranch;
-      const start = mainWider ? Cpos : branchTip;
-      reducer = {
-        ...M, id: dId, trayId: `RED-AUTO-${num}`, type: "reducer", length: Lr,
-        width: Math.max(w, wBranch), widthStart: Math.max(w, wBranch), widthEnd: Math.min(w, wBranch),
-        x: r2(start[0]), y: r2(start[1]), rotation: r2(mainWider ? dirC : CT.normDeg(dirC + 180)),
-        from: "", to: "", remark: "Auto Tee 分支變徑",
-      };
-    }
+    const plan = CT.planBranchReducer({ M, wBranch, Cpos, uS, dirC, id: dId, trayId: `RED-AUTO-${num}`, label: "Auto Tee" });
+    const { reducer, branchTip } = plan;
+    const needReducer = plan.need;
     [tee, left, right, reducer].forEach((b) => { if (b) delete b.connectors; });
 
     // Tee 的 A 端在 −uT 側；uT 與 m 同向 → A 接 Main-L，否則 A 接 Main-R
@@ -149,13 +168,7 @@
       { from: `${lId}:B`, to: `${teeId}:${same ? "A" : "B"}` },
       { from: `${teeId}:${same ? "B" : "A"}`, to: `${rId}:A` },
     ];
-    if (needReducer) {
-      const mainWider = w > wBranch;
-      addConnections.push({ from: `${teeId}:C`, to: `${dId}:${mainWider ? "A" : "B"}` });
-      addConnections.push({ from: `${dId}:${mainWider ? "B" : "A"}`, to: branchKey });
-    } else {
-      addConnections.push({ from: `${teeId}:C`, to: branchKey });
-    }
+    addConnections.push(...plan.chain(`${teeId}:C`, branchKey));
     // 原 Main 兩端既有的連接：改接到 Main-L:A / Main-R:B，座標不變
     const removeConnections = split.removeConnections;
     addConnections.push(...split.replaced);

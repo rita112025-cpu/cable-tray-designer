@@ -50,6 +50,13 @@
 
   function polyPoints(poly) { return poly.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" "); }
 
+  /** 預覽：畫出提案新增的 fitting 與 Reducer（不畫拆出來的 Main-1 / Main-2），讓預覽與實際 commit 一致 */
+  function ghostOf(pr) {
+    return pr.addBlocks.filter((b) => b.type !== "straight")
+      .flatMap((b) => CT.worldOutlines(CT.refresh(b)))
+      .map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+  }
+
   function renderCanvas(d) {
     const parts = [];
     const overlapIds = new Set(d.overlaps.flatMap((o) => [o.a, o.b]));
@@ -98,14 +105,14 @@
     const pr = state.proposals.find((p) => p.id === state.previewId);
     if (pr && pr.type === "AUTO_CROSS") {
       const G = pr.geometry;
-      const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+      const ghost = ghostOf(pr);
       parts.push(`<g pointer-events="none">${ghost}
         <line x1="${G.pS1[0]}" y1="${G.pS1[1]}" x2="${G.pS2[0]}" y2="${G.pS2[1]}" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 8"/>
         <circle cx="${G.J[0]}" cy="${G.J[1]}" r="12" fill="#ef4444"/>
         <text x="${G.J[0] + 18}" y="${G.J[1] - 14}" font-size="26" font-weight="700" fill="#ef4444">J・Cross ${G.L}×${G.L}mm・主線拆成 ${pr.info.lenL.toFixed(0)} + ${pr.info.lenR.toFixed(0)}</text></g>`);
     } else if (pr && pr.type === "AUTO_TEE") {
       const G = pr.geometry;
-      const ghost = CT.worldOutlines(CT.refresh(pr.addBlocks[0])).map((poly) => `<polygon points="${polyPoints(poly)}" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="3"/>`).join("");
+      const ghost = ghostOf(pr);
       parts.push(`<g pointer-events="none">${ghost}
         <line x1="${G.pS[0]}" y1="${G.pS[1]}" x2="${G.J[0]}" y2="${G.J[1]}" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 8"/>
         <circle cx="${G.J[0]}" cy="${G.J[1]}" r="12" fill="#ef4444"/>
@@ -178,9 +185,9 @@
     const i = p.info;
     if (p.type === "AUTO_CROSS") {
       return {
-        title: `四通：${p.sourceConnectors[0]} + ${p.sourceConnectors[1]} → 主線 ${p.mainId}`,
-        line1: `W${i.width} ${esc(i.system)} FFL+${i.elevation} ｜ Cross ${p.geometry.L}×${p.geometry.L}mm ｜ 分支到主線 t1=${p.geometry.t1.toFixed(0)} t2=${p.geometry.t2.toFixed(0)}mm`,
-        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR}（拆成兩段） ・ ${esc(i.trayBranch1)} ${i.oldLenBranch1}→${i.newLenBranch1} ・ ${esc(i.trayBranch2)} ${i.oldLenBranch2}→${i.newLenBranch2} ・ +1 cross ・ +${i.newConnections} connections`,
+        title: `四通：Main W${i.width} ｜ ${p.sourceConnectors[0]} + ${p.sourceConnectors[1]} → ${p.mainId}`,
+        line1: `${esc(i.system)} FFL+${i.elevation} ｜ Cross ${p.geometry.L}×${p.geometry.L}mm ｜ Branch-1 W${i.widthBranch1} ${i.reducer1 ? `→ Reducer W${i.reducer1.widthStart}→W${i.reducer1.widthEnd}` : "→ direct"} ｜ Branch-2 W${i.widthBranch2} ${i.reducer2 ? `→ Reducer W${i.reducer2.widthStart}→W${i.reducer2.widthEnd}` : "→ direct"}`,
+        line2: `${esc(i.trayMain)} ${i.oldLenMain}→${i.lenL} + ${i.lenR} ・ ${esc(i.trayBranch1)} ${i.oldLenBranch1}→${i.newLenBranch1} ・ ${esc(i.trayBranch2)} ${i.oldLenBranch2}→${i.newLenBranch2} ・ +1 cross${i.reducerCount ? ` +${i.reducerCount} reducer` : ""} ・ +${i.newConnections} connections`,
       };
     }
     if (p.type === "AUTO_TEE") {

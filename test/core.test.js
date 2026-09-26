@@ -730,10 +730,9 @@ test("兩條 Branch 不在同一交點 / 不互為反向 / 不是 90° → fail"
   assert.equal(cross(xLayout({}, { rotation: 275 })).ok, false); // 不是 90° 且不反向
   assert.equal(cross(xLayout({ rotation: 80 })).ok, false);
 });
-test("System / FFL / Width 不一致 → fail", () => {
+test("System / FFL 不一致 → fail（寬度不同自 v5.7 起改為自動加 Reducer，見下）", () => {
   assert.equal(cross(xLayout({ system: "POWER" })).ok, false);
   assert.equal(cross(xLayout({}, { elevation: 3200 })).ok, false);
-  assert.equal(cross(xLayout({}, { width: 150 })).ok, false);
 });
 test("交點太靠主線端點 / Branch 太短 / 朝向遠離 → fail，輸入完全不變", () => {
   const cases = [
@@ -917,6 +916,139 @@ test("新增的重疊只看同 FFL：Tee 的 Main 與 Branch 同 FFL，遇到不
   const r = tee([TM(), TS(), under]);
   assert.ok(r.ok, r.reason);
   assert.equal(CT.findOverlaps(r.blocks).length, 0);
+});
+
+console.log("Auto Cross + Branch Reducer (v5.7)");
+const reds = (r) => r.blocks.filter((b) => b.type === "reducer");
+const linked = (r, a, b) => r.connections.some((c) => [c.from, c.to].includes(a) && [c.from, c.to].includes(b));
+
+test("Main W300 + Branch W150 / W200 → 2 個 Reducer（各自 W300→W150、W300→W200），全部連接 Valid", () => {
+  const r = cross(xLayout({ width: 150 }, { width: 200 }));
+  assert.ok(r.ok, r.reason);
+  assert.equal(reds(r).length, 2);
+  assert.deepEqual(reds(r).map((d) => `${d.widthStart}>${d.widthEnd}`).sort(), ["300>150", "300>200"]);
+  assert.equal(XX(r).width, 300);
+  assert.equal(r.connections.length, 6);
+  assert.equal(r.proposal.info.reducerCount, 2);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+});
+test("Main W300 + Branch W300 / W150 → 只有 1 個 Reducer（在窄的那一側）；5 條新連接", () => {
+  const r = cross(xLayout({}, { width: 150 }));
+  assert.ok(r.ok, r.reason);
+  assert.equal(reds(r).length, 1);
+  assert.equal(r.connections.length, 5);
+  assert.ok(linked(r, `${XX(r).id}:D`, `${reds(r)[0].id}:A`)); // 窄分支在下方 → 接 Cross:D，Reducer A（寬端）朝 Cross
+  assert.ok(linked(r, `${XX(r).id}:C`, "S:B")); // 同寬的上方分支直接接 Cross:C
+});
+test("三者皆 W300 → 0 個 Reducer，維持 v5.4 行為（4 條連接）", () => {
+  const r = cross(xLayout());
+  assert.equal(reds(r).length, 0);
+  assert.equal(r.connections.length, 4);
+  assert.equal(r.proposal.info.reducer1, null); assert.equal(r.proposal.info.reducer2, null);
+});
+test("Main W150 + Branch W300 → Reducer A 在 Branch 側（寬端接 Branch），Cross 本體用 Main 寬度", () => {
+  const r = cross([TM({ width: 150 }), TS({ width: 300 }), XS2({ width: 300 })]);
+  assert.ok(r.ok, r.reason);
+  assert.equal(XX(r).width, 150); near(XX(r).length, 300);
+  assert.equal(reds(r).length, 2);
+  reds(r).forEach((d) => { assert.equal(d.widthStart, 300); assert.equal(d.widthEnd, 150); });
+  const [x1, x2] = [reds(r)[0].id, reds(r)[1].id];
+  assert.ok(linked(r, `${x1}:A`, "S:B") || linked(r, `${x1}:A`, "S2:B"));
+  assert.ok(linked(r, `${x2}:A`, "S:B") || linked(r, `${x2}:A`, "S2:B"));
+  assert.ok(linked(r, `${x1}:B`, `${XX(r).id}:C`) || linked(r, `${x1}:B`, `${XX(r).id}:D`));
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+});
+test("兩條 Branch 一寬一窄（Main W200；Branch-1 W300、Branch-2 W100）→ 兩顆 Reducer 方向各自正確", () => {
+  const r = cross([TM({ width: 200 }), TS({ width: 300 }), XS2({ width: 100 })]);
+  assert.ok(r.ok, r.reason);
+  const X = XX(r);
+  const rWide = reds(r).find((d) => d.widthEnd === 200); // 300→200：分支較寬
+  const rNarrow = reds(r).find((d) => d.widthEnd === 100); // 200→100：主線較寬
+  assert.equal(rWide.widthStart, 300); assert.equal(rNarrow.widthStart, 200);
+  assert.ok(linked(r, `${rWide.id}:A`, "S:B") && linked(r, `${rWide.id}:B`, `${X.id}:C`)); // A（寬）在 Branch 側
+  assert.ok(linked(r, `${rNarrow.id}:A`, `${X.id}:D`) && linked(r, `${rNarrow.id}:B`, "S2:B")); // A（寬）在 Cross 側
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+});
+test("上/下 Branch、傳入順序互換、整體旋轉 0/90/180/270：全部成功、端點精確重合、全部 Valid", () => {
+  for (const rot of [0, 90, 180, 270]) {
+    for (const swap of [false, true]) {
+      const bl = rot4(xLayout({ width: 150 }, { width: 200 }), rot);
+      const r = swap ? cross(bl, [], "S2:B", "S:B") : cross(bl);
+      assert.ok(r.ok, `rot=${rot} swap=${swap}: ${r.reason}`);
+      allCoincide(r);
+      assert.equal(reds(r).length, 2);
+      assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+      assert.equal(CT.findOverlaps(r.blocks).length, 0);
+    }
+  }
+});
+test("Cross / Reducer / Branch 端點精確重合；Branch 新長度 = 原長 + t − L/2 − Reducer 長（同寬為 0）", () => {
+  const r = cross(xLayout({ width: 150 }, {}));
+  allCoincide(r);
+  near(r.blocks.find((b) => b.id === "S").length, 800 + 400 - 300 - 300);  // 有 Reducer：600
+  near(r.blocks.find((b) => b.id === "S2").length, 800 + 400 - 300);       // 同寬：900
+  // 有 Reducer 那側：Cross:C (1000,-300) → Reducer → Branch 新端點 (1000,-600)
+  const red = reds(r)[0];
+  const ys = red.connectors.map((k) => k.worldY).sort((a, b) => b - a);
+  near(ys[0], -300); near(ys[1], -600);
+});
+test("Main 原兩端既有連接：座標與驗證等級維持（含 Reducer）", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000 });
+  const E2 = B("straight", { id: "E2", x: 2000, y: 0, length: 1000 });
+  const bl = [...xLayout({ width: 150 }, { width: 200 }), E1, E2];
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }, { id: "c2", from: "M:B", to: "E2:A" }];
+  const r = cross(bl, cn);
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.connections.length, 8);
+  const L = r.blocks.find((b) => b.id.startsWith("CL-A")), R = r.blocks.find((b) => b.id.startsWith("CR-A"));
+  near(L.connectors[0].worldX, 0); near(R.connectors[1].worldX, 2000);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  assert.equal(CT.buildGraph(r.blocks, r.connections).subgraphCount, 1);
+});
+test("一側扣掉 Reducer 後 < 100mm → 整筆失敗；另一側足夠也不能部分提交；輸入完全不變", () => {
+  const mk = (w1, w2) => [XM(), TS({ width: w1, y: -500, length: 200 }), XS2({ width: w2 })]; // Branch-1 tip y=-300、t=300
+  assert.ok(cross(mk(300, 300)).ok);              // 同寬：200+300−300 = 200
+  assert.ok(cross(mk(300, 150)).ok);              // 另一側有 Reducer 也足夠
+  const bad = mk(150, 300); const snap = JSON.stringify([bad, []]);
+  const r = cross(bad);                            // Branch-1：200+300−300−300 = −100
+  assert.equal(r.ok, false);
+  assert.equal(JSON.stringify([bad, []]), snap);
+  assert.equal(CT.detectAutoCrosses(bad, []).proposals.length, 0);
+});
+test("System / FFL 不同、任一 Branch occupied → 仍然失敗（不同寬時同樣適用）", () => {
+  assert.equal(cross(xLayout({ width: 150, system: "POWER" }, { width: 150 })).ok, false);
+  assert.equal(cross(xLayout({ width: 150 }, { width: 150, elevation: 3200 })).ok, false);
+  const Z = B("straight", { id: "Z", width: 150, x: 1000, y: -400, length: 300, rotation: 270 });
+  assert.equal(cross([...xLayout({ width: 150 }, { width: 150 }), Z], [{ id: "c", from: "S:B", to: "Z:A" }]).ok, false);
+});
+test("collision 擋住任一 Reducer → 整筆失敗（同 FFL 才擋；不同 FFL 不擋）", () => {
+  const obst = (o) => OB({ x: 1100, y: -450, length: 300, ...o }); // 壓到上方 Reducer 寬端附近，原本不與任何 Tray 重疊
+  const bl = (o) => [...xLayout({ width: 150 }, {}), obst(o)];
+  assert.equal(CT.findOverlaps(bl()).length, 0);
+  const snap = JSON.stringify([bl(), []]);
+  const r = cross(bl());
+  assert.ok(hasCollision(r), r.reason);
+  assert.equal(JSON.stringify([bl(), []]), snap);
+  assert.ok(cross(bl({ elevation: 3600 })).ok);
+});
+test("第二次偵測不再插入；偵測到不同寬的十字，且 sourceConnectors / mainId 正確", () => {
+  const bl = xLayout({ width: 150 }, { width: 200 });
+  const found = CT.detectAutoCrosses(bl, []).proposals;
+  assert.equal(found.length, 1);
+  assert.deepEqual(found[0].sourceConnectors.slice().sort(), ["S2:B", "S:B"]);
+  assert.equal(found[0].mainId, "M");
+  const r = cross(bl);
+  assert.equal(CT.detectAutoCrosses(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(CT.detectAutoTees(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(CT.detectAutoReducers(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(cross(r.blocks, r.connections).ok, false);
+});
+test("Loop 不增加、subgraph 不惡化；成功時輸入不被修改", () => {
+  const bl = xLayout({ width: 150 }, { width: 200 }); const snap = JSON.stringify([bl, []]);
+  const r = cross(bl);
+  const g = CT.buildGraph(r.blocks, r.connections);
+  assert.equal(g.loopCount, 0); assert.equal(g.subgraphCount, 1);
+  assert.equal(JSON.stringify([bl, []]), snap);
 });
 
 console.log("Export");

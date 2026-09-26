@@ -16,9 +16,12 @@
  * 幾何：Cross 長 = 高 = 2 × 寬度（W300 → 600 × 600），中心在交點 J，A/B/C/D 各距 J L/2。
  *   Cross 的旋轉取主線旋轉：A 朝主線 A 側、B 朝 B 側、C 朝主線的 −y 側、D 朝 +y 側。
  *
- * 第一版限制：Main / Branch-1 / Branch-2 皆為 Straight，同寬、同 System / FFL，
+ * v5.7：各 Branch 與 Main 寬度不同時，該側一併加一個 Reducer（最多 2 個，同一個 transaction）。
+ *   Cross 本體一律用 Main 寬度；Reducer A 端永遠是寬端，長度沿用 CT.REDUCER_LEN；
+ *   各 Branch 新長度 = 原長度 + t − L/2 − Reducer 長度（同寬為 0），任一側 < 100 mm 整筆失敗。
+ *
+ * 限制：Main / Branch-1 / Branch-2 皆為 Straight，同 System / FFL，
  * 兩 Branch 與 Main 皆 90°、彼此反向、交在主線同一點（±0.5mm）、端點 free。
- * Cross + Branch Reducer 留待後續版本。
  */
 (function (root) {
   const CT = (root.CT = root.CT || {});
@@ -41,8 +44,6 @@
     for (const S of [S1, S2]) {
       if (S.b.system !== M.system) return { ok: false, stage: "attr", reason: `System 不一致 ${S.b.system} vs ${M.system}` };
       if (S.b.elevation !== M.elevation) return { ok: false, stage: "attr", reason: `FFL 不一致 +${S.b.elevation} vs +${M.elevation}` };
-      const wb = CT.effectiveWidth(S.b, S.k.id);
-      if (wb !== M.width) return { ok: false, stage: "attr", reason: `寬度不一致 W${wb} vs W${M.width}（Cross + Reducer 留待後續版本）` };
       if (Math.abs(CT.angleBetween(S.k.worldDir, M.rotation) - 90) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: "分支與主線不是 90°" };
     }
     if (CT.angleBetween(S1.k.worldDir + 180, S2.k.worldDir) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: "兩條分支不是互為反向" };
@@ -59,14 +60,19 @@
     const h = L / 2;
     const lenL = s - h;
     const lenR = M.length - s - h;
-    const newLen1 = S1.b.length + h1.t - h;
-    const newLen2 = S2.b.length + h2.t - h;
+    // 各分支獨立：寬度與主線不同就在該側加一個 Reducer（長度 CT.REDUCER_LEN），同寬則 0
+    const wb1 = CT.effectiveWidth(S1.b, S1.k.id);
+    const wb2 = CT.effectiveWidth(S2.b, S2.k.id);
+    const Lr1 = wb1 !== w ? CT.REDUCER_LEN : 0;
+    const Lr2 = wb2 !== w ? CT.REDUCER_LEN : 0;
+    const newLen1 = S1.b.length + h1.t - h - Lr1;
+    const newLen2 = S2.b.length + h2.t - h - Lr2;
     if (s < 0 || s > M.length) return { ok: false, stage: "geom", reason: `交點在主線之外（s=${s.toFixed(0)}, 主線長 ${M.length}）` };
     if (lenL < MIN_LEN || lenR < MIN_LEN) return { ok: false, stage: "geom", reason: `交點太靠近主線端點：Main-L ${lenL.toFixed(0)} / Main-R ${lenR.toFixed(0)}（需 ≥ ${MIN_LEN}mm，Cross 長 ${L}mm）` };
-    if (newLen1 < MIN_LEN || newLen2 < MIN_LEN) return { ok: false, stage: "geom", reason: `分支調整後長度不足 ${MIN_LEN}mm：${newLen1.toFixed(0)} / ${newLen2.toFixed(0)}` };
+    if (newLen1 < MIN_LEN || newLen2 < MIN_LEN) return { ok: false, stage: "geom", reason: `分支調整後長度不足 ${MIN_LEN}mm（含 Reducer）：${newLen1.toFixed(0)} / ${newLen2.toFixed(0)}` };
 
     let n = 1;
-    while (["CX-A", "CL-A", "CR-A"].some((p) => blocks.some((b) => b.id === `${p}${n}`))) n++;
+    while (["CX-A", "CL-A", "CR-A", "CD1-A", "CD2-A"].some((p) => blocks.some((b) => b.id === `${p}${n}`))) n++;
     const [xId, lId, rId] = [`CX-A${n}`, `CL-A${n}`, `CR-A${n}`];
     const r2 = CT.round2;
     const split = CT.splitMainPlan(M, connections, s, L, lId, rId, "Auto Cross");
@@ -81,13 +87,23 @@
     const sideOf = (S) => (CT.angleBetween(S.k.worldDir, M.rotation + 270) < 1 ? "D" : "C");
     const side1 = sideOf(S1);
     const side2 = sideOf(S2);
-    const tip = (hit) => [J[0] - h * hit.uS[0], J[1] - h * hit.uS[1]];
+    const num = String(n).padStart(3, "0");
+    const branchPlan = (S, hit, wb, idx) => {
+      const Cpos = [J[0] - h * hit.uS[0], J[1] - h * hit.uS[1]]; // Cross 該端連接器位置
+      return CT.planBranchReducer({
+        M, wBranch: wb, Cpos, uS: hit.uS, dirC: CT.normDeg(S.k.worldDir + 180),
+        id: `CD${idx}-A${n}`, trayId: `RED-AUTO-${num}-${idx}`, label: "Auto Cross",
+      });
+    };
+    const plan1 = branchPlan(S1, h1, wb1, 1);
+    const plan2 = branchPlan(S2, h2, wb2, 2);
+    const reducers = [plan1.reducer, plan2.reducer].filter(Boolean);
 
     const addConnections = [
       { from: `${lId}:B`, to: `${xId}:A` },
       { from: `${xId}:B`, to: `${rId}:A` },
-      { from: `${xId}:${side1}`, to: keyA },
-      { from: `${xId}:${side2}`, to: keyB },
+      ...plan1.chain(`${xId}:${side1}`, keyA),
+      ...plan2.chain(`${xId}:${side2}`, keyB),
       ...split.replaced,
     ];
 
@@ -98,20 +114,23 @@
         type: "AUTO_CROSS",
         sourceConnectors: [keyA, keyB],
         mainId: M.id,
-        geometry: { J, s, h, L, t1: h1.t, t2: h2.t, m, rot: M.rotation, pS1: [S1.k.worldX, S1.k.worldY], pS2: [S2.k.worldX, S2.k.worldY] },
+        geometry: { J, s, h, L, t1: h1.t, t2: h2.t, Lr1, Lr2, m, rot: M.rotation, pS1: [S1.k.worldX, S1.k.worldY], pS2: [S2.k.worldX, S2.k.worldY] },
         info: {
           system: M.system, width: w, elevation: M.elevation,
           trayMain: M.trayId, trayBranch1: S1.b.trayId, trayBranch2: S2.b.trayId,
           oldLenMain: M.length, lenL: r2(lenL), lenR: r2(lenR),
-          oldLenBranch1: S1.b.length, newLenBranch1: r2(newLen1),
-          oldLenBranch2: S2.b.length, newLenBranch2: r2(newLen2),
+          oldLenBranch1: S1.b.length, newLenBranch1: r2(newLen1), widthBranch1: wb1,
+          oldLenBranch2: S2.b.length, newLenBranch2: r2(newLen2), widthBranch2: wb2,
+          reducer1: plan1.reducer ? { widthStart: plan1.reducer.widthStart, widthEnd: plan1.reducer.widthEnd } : null,
+          reducer2: plan2.reducer ? { widthStart: plan2.reducer.widthStart, widthEnd: plan2.reducer.widthEnd } : null,
+          reducerCount: reducers.length,
           newConnections: addConnections.length - split.removeConnections.length,
         },
         removeBlocks: [M.id],
         derives: { [lId]: M.id, [rId]: M.id },
         removeConnections: split.removeConnections,
-        updateBlocks: [CT.tipUpdate(S1, newLen1, tip(h1)), CT.tipUpdate(S2, newLen2, tip(h2))],
-        addBlocks: [cross, split.left, split.right],
+        updateBlocks: [CT.tipUpdate(S1, newLen1, plan1.branchTip), CT.tipUpdate(S2, newLen2, plan2.branchTip)],
+        addBlocks: [cross, split.left, split.right, ...reducers],
         addConnections,
       },
     };
