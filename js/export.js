@@ -45,6 +45,7 @@
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
+  CT.csvCell = csvCell;
 
   CT.toCSV = function (blocks) {
     const head = ["Tray ID", "Type", "System", "WidthStart", "WidthEnd", "Length(mm)", "CenterlineLength(mm)", "FFL(Tray底面高程)", "TrayHeight", "From", "To", "Remark"];

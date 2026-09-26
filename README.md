@@ -35,6 +35,7 @@
 | **v5.7** | **Cross + Branch Reducer**：Cross 的兩條分支各自與主線不同寬時，該側自動加 Reducer（最多 2 個） |
 | **v5.8** | **Tray Height / Z 區間碰撞**：FFL 定義為 Tray 底面高程；設定 `trayHeight` 後，只有 XY 與 Z 區間都重疊才算 3D 碰撞 |
 | **v5.9** | **連接處 Tray Height 驗證**：兩側高度都有設定且不同 → Warning；任一未設定 → 不判定 |
+| **CAD Bridge v1** | **CAD Manifest CSV 匯出**：把配置資料轉成 AutoCAD 動態圖塊用的資料（座標 / 旋轉已轉換），規格在 [`cad/`](cad/) |
 
 ### Auto Elbow 90°（v4）
 
@@ -155,6 +156,20 @@ Main ───────────┼───────────  → 
 - 預覽會連 Reducer 一起畫出來，與實際 commit 的內容一致；proposal 文字會列出每條 Branch 是 `direct` 還是 `Reducer W…→W…`。
 - Tee 與 Cross 共用 `CT.planBranchReducer`，Reducer 的方向與連接邏輯只有一份。
 
+### CAD Bridge v1（AutoCAD 動態圖塊）
+
+網站是資料來源、AutoCAD 動態圖塊是繪圖輸出端。按左側 **CAD Manifest CSV** 匯出，欄位固定為：
+
+```text
+BLOCK,TRAY_ID,X,Y,ROTATION,LENGTH,WIDTH,FFL,TRAY_HEIGHT,SYSTEM,STATUS
+```
+
+- 座標 / 旋轉：`CAD_Y = −y`、`CAD_ROTATION = normalize(360 − rotation)`（Designer 順時針為正，AutoCAD 逆時針為正）。
+- 基準點：Straight / Reducer / Elbow = A 端中心；Tee / Cross = 中心 J。
+- `LENGTH` 只有 Straight / Reducer 有值；寬度**不自動修正**，不在標準清單（100…1500）→ `STATUS = NON_STANDARD_WIDTH`。
+- `TRAY_HEIGHT` 未設定留空；`RUNG_SPACING` 僅存在於 CAD 端。
+- 完整規格、範例與已知限制：[`cad/mapping/designer-to-autocad.md`](cad/mapping/designer-to-autocad.md)。這一版不含 AutoLISP，也不自動插入 DWG。
+
 ### 重疊 / 碰撞檢查（v5.5）
 
 Elbow / Reducer / Tee / Cross 過去只保證「數學與連接合法」，新元件仍可能壓到別的 Tray。v5.5 把碰撞檢查放進
@@ -213,3 +228,65 @@ Zmax = FFL + trayHeight
   被 Tee / Cross 替換時只要不變差即可。
 - 範例資料沒有設定高度，驗證結果與 v5.8 完全相同。
 
+後續規劃：垂直淨空（Clearance）與支架資料（v5.10，設計文件見 `docs/`）、CAD Bridge 後續（Elbow / Reducer / Tee / Cross 圖塊驗證、AutoLISP）、支路自動路由。
+
+## 長度的定義
+
+- **元件 `length` 加總**：只是欄位相加，不是 Route 長度。
+- **中心線長度**：直線 / 變徑 = `length`；彎頭 = `(innerRadius + width/2) × 角度(rad)`（W300、內半徑 150、90° → 471 mm）；Tee / Cross 視為節點，權重 0。
+- **全專案中心線合計** ≠ 任何單一 Route。各 Route 的長度在「路徑分析」分頁分別列出。
+
+## DXF 匯出的範圍
+
+有：`LWPOLYLINE`（元件輪廓）、`TEXT`、`LINE`（Connection，圖層 `TRAY-LINK`）、`LAYER` 表；`$ACADVER = AC1014`。
+沒有：`BLOCK` / `INSERT` / `DIMENSION` / 3D / Z 值。FFL（Tray 底面高程）與有設定時的 Tray Height 只寫在文字標註內（例如 `FFL+2700 H100`）。DXF 只有匯出，沒有匯入。
+
+BOM 只有數量與長度，**不含重量**（沒有製造商 / 型錄 / 材質依據）。
+
+## 專案結構
+
+```
+index.html            頁面
+css/style.css
+js/geometry.js        元件模型、Connector、中心線、輪廓、Tray Height / Z 區間
+js/collision.js       v5.5 / v5.8 輪廓重疊與 Z 區間碰撞檢查（供 checkProposal 使用）
+js/graph.js           Graph 建模、Route DFS
+js/validator.js       Connection 驗證（含 v5.9 Tray Height 一致性）
+js/transaction.js     Auto* 共用：模擬 / 通用驗證 / 提交（含 remove / replaces）
+js/autoelbow.js       Auto Elbow 90° / 45°（proposal / validate / commit）
+js/autoreducer.js     v5.0 Auto Reducer
+js/autotee.js         v5.2 Auto Tee（拆分主線）＋ 分支 Reducer 共用 helper
+js/autocross.js       v5.4 Auto Cross（v5.7 起含分支 Reducer）
+js/export.js          DXF / CSV / JSON
+js/cadmanifest.js     CAD Bridge v1：AutoCAD Manifest CSV
+js/sample.js          範例資料
+js/app.js             UI
+test/core.test.js     單元測試（Node 或瀏覽器）
+test/index.html       在瀏覽器執行測試
+cad/                  AutoCAD 動態圖塊橋接規格與範例（見 cad/README.md）
+docs/                 設計文件（例如 v5.10 垂直淨空與支架資料規格，尚未實作）
+```
+
+核心模組（除 `app.js` 外）沒有 DOM 相依，可單獨在 Node 執行。
+
+## 測試
+
+有 Node：
+
+```bash
+node test/core.test.js
+```
+
+沒有 Node：用瀏覽器開啟 `test/index.html`（標題顯示 PASS / FAIL）。若瀏覽器擋 `file://`，可先啟動簡易伺服器：
+
+```bash
+python -m http.server 8000
+```
+
+## 發佈到 GitHub Pages
+
+Repository → Settings → Pages → Source 選 `main` / root，網址即為 `https://<user>.github.io/<repo>/`。
+
+## 座標系
+
+SVG 座標（x 向右、y 向下），角度 0° = 向右、90° = 向下。DXF 匯出與 CAD Manifest 都會把 y 取負值轉為 CAD 座標；Manifest 的旋轉另外轉成逆時針為正（見 `cad/`）。

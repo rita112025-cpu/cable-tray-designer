@@ -438,6 +438,12 @@
   $("btn-detect-cross").addEventListener("click", () => detect("cross"));
   $("btn-dxf").addEventListener("click", () => download(CT.toDXF(state.blocks, state.connections), "cable-tray-sketch-AC1014.dxf", "application/dxf"));
   $("btn-csv").addEventListener("click", () => download(CT.toCSV(state.blocks), "bom.csv", "text/csv;charset=utf-8"));
+  $("btn-cad").addEventListener("click", () => {
+    const m = CT.toCadManifest(state.blocks);
+    download(m.csv, "cad-manifest.csv", "text/csv;charset=utf-8");
+    if (m.warnings.length) toast(`已匯出 CAD Manifest（${m.rows.length} 列）；${m.warnings.length} 筆警告：${m.warnings[0]}`, true);
+    else toast(`已匯出 CAD Manifest（${m.rows.length} 列，全部 STATUS=OK）`);
+  });
   $("btn-json").addEventListener("click", () => download(CT.toJSON(state.blocks, state.connections, CT.buildGraph(state.blocks, state.connections)), "graph.json", "application/json"));
   $("btn-sample").addEventListener("click", () => setState({ blocks: CT.sampleBlocks(), connections: CT.sampleConnections(), selectedId: "B1", pending: null, proposals: [], previewId: null }));
   $("btn-clear").addEventListener("click", () => setState({ blocks: [], connections: [], selectedId: null, pending: null, proposals: [], previewId: null }));

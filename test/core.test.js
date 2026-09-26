@@ -1,7 +1,7 @@
 // 執行：node test/core.test.js （或 npm test）
 const assert = require("node:assert/strict");
 const path = require("node:path");
-["geometry", "collision", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "autocross", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
+["geometry", "collision", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "autocross", "export", "cadmanifest", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
 const CT = globalThis.CT;
 
 let passed = 0;
@@ -1208,6 +1208,127 @@ test("範例資料沒有設定高度：驗證結果與 v5.8 完全相同", () =>
   const v = CT.validateConnections(CT.sampleBlocks(), CT.sampleConnections());
   assert.ok(v.every((x) => !heightCheck(x)));
   assert.deepEqual(v.map((x) => x.overall), ["Warning", "Warning", "Warning", "Valid"]);
+});
+
+console.log("CAD Bridge v1 — Manifest CSV");
+const cadRow = (b) => CT.cadRow(b);
+const col = (name) => CT.CAD_HEADER.indexOf(name);
+const cellOf = (b, name) => cadRow(b)[col(name)];
+
+test("欄位順序固定：BLOCK,TRAY_ID,X,Y,ROTATION,LENGTH,WIDTH,FFL,TRAY_HEIGHT,SYSTEM,STATUS；CSV 不含 BOM", () => {
+  assert.equal(CT.CAD_HEADER.join(","), "BLOCK,TRAY_ID,X,Y,ROTATION,LENGTH,WIDTH,FFL,TRAY_HEIGHT,SYSTEM,STATUS");
+  const m = CT.toCadManifest([B("straight", { id: "A", trayId: "T-001" })]);
+  assert.equal(m.csv.split("\n")[0], CT.CAD_HEADER.join(","));
+  assert.ok(!m.csv.startsWith("﻿"));
+});
+test("1. SVG (1000, 2500) → CAD (1000, −2500)；y = 0 不輸出 -0", () => {
+  const b = B("straight", { id: "A", trayId: "T-001", x: 1000, y: 2500, length: 2400, width: 300, elevation: 2700, trayHeight: 100, system: "SCADA" });
+  assert.equal(cadRow(b).join(","), "SCADA_TRAY_ST,T-001,1000,-2500,0,2400,300,2700,100,SCADA,OK");
+  assert.equal(cellOf(B("straight", { id: "Z", x: 0, y: 0 }), "Y"), "0");
+});
+test("2/3. 旋轉 CAD = normalize(360 − Designer)：90 → 270、270 → 90、0 → 0、45 → 315、180 → 180", () => {
+  [[0, "0"], [90, "270"], [270, "90"], [45, "315"], [180, "180"], [360, "0"], [-90, "90"]].forEach(([r, want]) => {
+    assert.equal(cellOf(B("straight", { id: "A", rotation: r }), "ROTATION"), want, `rot ${r}`);
+  });
+});
+test("轉換與真實幾何一致：CAD 原點 + LENGTH·(cos ROT, sin ROT) = Straight B 端的 (worldX, −worldY)", () => {
+  [0, 30, 45, 90, 135, 180, 270, 315].forEach((r) => {
+    const b = B("straight", { id: "A", x: 400, y: 700, rotation: r, length: 1200 });
+    const row = cadRow(b);
+    const [x, y, rot, len] = [Number(row[col("X")]), Number(row[col("Y")]), Number(row[col("ROTATION")]), Number(row[col("LENGTH")])];
+    const bEnd = b.connectors.find((k) => k.id === "B");
+    near(x + len * Math.cos((rot * Math.PI) / 180), bEnd.worldX, 0.05);
+    near(y + len * Math.sin((rot * Math.PI) / 180), -bEnd.worldY, 0.05);
+    // A 端 = 基準點
+    const aEnd = b.connectors.find((k) => k.id === "A");
+    near(x, aEnd.worldX, 0.01); near(y, -aEnd.worldY, 0.01);
+  });
+});
+test("Elbow：基準點 = A 端；CAD 圖塊本地座標 B = (Rc·sinθ, −Rc(1−cosθ)) 旋轉後 = Designer B 的 (worldX, −worldY)（順時針彎在 CAD 為 −Y 側）", () => {
+  [[90, 0], [90, 90], [90, 270], [45, 0], [45, 135]].forEach(([angle, r]) => {
+    const e = B(angle === 90 ? "elbow90" : "elbow45", { id: "E", x: 500, y: 300, rotation: r, innerRadius: 150, width: 300 });
+    const row = cadRow(e);
+    const [x, y, rot] = [Number(row[col("X")]), Number(row[col("Y")]), Number(row[col("ROTATION")]) * Math.PI / 180];
+    const Rc = 300, th = (angle * Math.PI) / 180;
+    const lx = Rc * Math.sin(th), ly = -Rc * (1 - Math.cos(th)); // CAD 圖塊本地座標
+    const wx = x + lx * Math.cos(rot) - ly * Math.sin(rot);
+    const wy = y + lx * Math.sin(rot) + ly * Math.cos(rot);
+    const bEnd = e.connectors.find((k) => k.id === "B");
+    near(wx, bEnd.worldX, 0.05); near(wy, -bEnd.worldY, 0.05);
+    assert.equal(row[col("BLOCK")], angle === 90 ? "SCADA_TRAY_EL90" : "SCADA_TRAY_EL45");
+    assert.equal(row[col("LENGTH")], ""); // 弧長不作為線性 LENGTH
+  });
+});
+test("4/5. Straight / Reducer / Elbow 的 X,Y = A 端；Tee / Cross 的 X,Y = 中心 J，LENGTH 留空", () => {
+  ["straight", "reducer", "elbow90"].forEach((ty) => {
+    const b = B(ty, { id: "A", x: 123, y: 456, rotation: 90 });
+    const a = b.connectors.find((k) => k.id === "A");
+    near(Number(cellOf(b, "X")), a.worldX, 0.01); near(Number(cellOf(b, "Y")), -a.worldY, 0.01);
+  });
+  ["tee", "cross"].forEach((ty) => {
+    const b = B(ty, { id: "A", x: 123, y: 456, rotation: 90 });
+    assert.equal(cellOf(b, "X"), "123"); assert.equal(cellOf(b, "Y"), "-456"); // Designer x,y 即中心 J
+    assert.equal(cellOf(b, "LENGTH"), "");
+  });
+});
+test("LENGTH：Straight / Reducer = 中心線長度；Elbow / Tee / Cross 留空", () => {
+  assert.equal(cellOf(B("straight", { id: "A", length: 1800 }), "LENGTH"), "1800");
+  assert.equal(cellOf(B("reducer", { id: "A", length: 300 }), "LENGTH"), "300");
+  ["elbow90", "elbow45", "tee", "cross"].forEach((ty) => assert.equal(cellOf(B(ty, { id: "A" }), "LENGTH"), "", ty));
+});
+test("元件 → 圖塊名稱對照（六種）", () => {
+  const want = { straight: "SCADA_TRAY_ST", elbow90: "SCADA_TRAY_EL90", elbow45: "SCADA_TRAY_EL45", reducer: "SCADA_TRAY_RED", tee: "SCADA_TRAY_TEE", cross: "SCADA_TRAY_CROSS" };
+  Object.entries(want).forEach(([ty, name]) => assert.equal(cellOf(B(ty, { id: "A" }), "BLOCK"), name));
+});
+test("6/7. WIDTH：W300 → OK；W350 → 照實輸出 350 並標 NON_STANDARD_WIDTH（不四捨五入）；100 與 1500 為邊界內", () => {
+  assert.equal(cellOf(B("straight", { id: "A", width: 300 }), "STATUS"), "OK");
+  const r350 = cadRow(B("straight", { id: "A", trayId: "T-9", width: 350 }));
+  assert.equal(r350[col("WIDTH")], "350"); assert.equal(r350[col("STATUS")], "NON_STANDARD_WIDTH");
+  [100, 200, 1500].forEach((w) => assert.equal(cellOf(B("straight", { id: "A", width: w }), "STATUS"), "OK", `W${w}`));
+  [50, 1600, 0].forEach((w) => assert.equal(cellOf(B("straight", { id: "A", width: w }), "STATUS"), "NON_STANDARD_WIDTH", `W${w}`));
+  const m = CT.toCadManifest([B("straight", { id: "A", trayId: "T-9", width: 350 }), B("straight", { id: "B", trayId: "T-10", width: 300 })]);
+  assert.equal(m.warnings.length, 1); assert.ok(m.warnings[0].includes("T-9") && m.warnings[0].includes("350"));
+});
+test("Reducer：WIDTH = A 端寬度；A 或 B 端寬度任一非標準 → NON_STANDARD_WIDTH", () => {
+  const ok = B("reducer", { id: "A", widthStart: 300, widthEnd: 200 });
+  assert.equal(cellOf(ok, "WIDTH"), "300"); assert.equal(cellOf(ok, "STATUS"), "OK");
+  assert.equal(cellOf(B("reducer", { id: "A", widthStart: 300, widthEnd: 250 }), "STATUS"), "NON_STANDARD_WIDTH");
+  assert.equal(cellOf(B("reducer", { id: "A", widthStart: 350, widthEnd: 200 }), "STATUS"), "NON_STANDARD_WIDTH");
+});
+test("8. trayHeight 未設定（null / 0 / 負值）→ 留空，不填 0；有值照輸出", () => {
+  [null, 0, -5, undefined].forEach((h) => assert.equal(cellOf(B("straight", { id: "A", trayHeight: h }), "TRAY_HEIGHT"), "", String(h)));
+  assert.equal(cellOf(B("straight", { id: "A", trayHeight: 100 }), "TRAY_HEIGHT"), "100");
+});
+test("9. elevation / system / trayId 正確輸出；含逗號的 TRAY_ID 會被引號跳脫", () => {
+  const b = B("straight", { id: "A", trayId: "SCADA-TRAY-014", system: "POWER", elevation: 3200 });
+  assert.equal(cellOf(b, "TRAY_ID"), "SCADA-TRAY-014"); assert.equal(cellOf(b, "SYSTEM"), "POWER"); assert.equal(cellOf(b, "FFL"), "3200");
+  const m = CT.toCadManifest([B("straight", { id: "A", trayId: "T,1" })]);
+  assert.ok(m.csv.split("\n")[1].includes('"T,1"'));
+});
+test("10. 匯出 Manifest 不修改輸入，也不影響既有 JSON / CSV BOM / DXF 輸出", () => {
+  const bl = CT.sampleBlocks(), cn = CT.sampleConnections();
+  const g = CT.buildGraph(bl, cn);
+  const before = [CT.toCSV(bl), CT.toJSON(bl, cn, g), CT.toDXF(bl, cn)];
+  const snap = JSON.stringify([bl, cn]);
+  CT.toCadManifest(bl);
+  assert.equal(JSON.stringify([bl, cn]), snap);
+  assert.deepEqual([CT.toCSV(bl), CT.toJSON(bl, cn, g), CT.toDXF(bl, cn)], before);
+});
+test("範例資料：每個元件一列、欄數固定、Tee 用中心點；只有 B11（W150，不在 100 一階的標準清單）標 NON_STANDARD_WIDTH", () => {
+  const bl = CT.sampleBlocks();
+  const m = CT.toCadManifest(bl);
+  assert.equal(m.rows.length, bl.length);
+  assert.ok(m.rows.every((r) => r.length === 11));
+  assert.equal(m.warnings.length, 1);
+  assert.ok(m.warnings[0].includes("T-AUTO-04") && m.warnings[0].includes("150"));
+  assert.deepEqual(m.rows.filter((r) => r[10] !== "OK").map((r) => r[1]), ["T-AUTO-04"]);
+  const tee = m.rows.find((r) => r[0] === "SCADA_TRAY_TEE");
+  const b7 = bl.find((b) => b.type === "tee");
+  assert.equal(tee[col("X")], String(b7.x)); assert.equal(tee[col("Y")], String(-b7.y));
+});
+test("RUNG_SPACING 不在 Manifest 也不在 Designer 資料模型（v1 只存在於 CAD 端）", () => {
+  assert.ok(!CT.CAD_HEADER.includes("RUNG_SPACING"));
+  assert.ok(!("rungSpacing" in B("straight")));
 });
 
 console.log("Export");
