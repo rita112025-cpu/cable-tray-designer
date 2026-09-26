@@ -1,7 +1,7 @@
 // 執行：node test/core.test.js （或 npm test）
 const assert = require("node:assert/strict");
 const path = require("node:path");
-["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
+["geometry", "graph", "validator", "transaction", "autoelbow", "autoreducer", "autotee", "autocross", "export", "sample"].forEach((f) => require(path.join(__dirname, "..", "js", f + ".js")));
 const CT = globalThis.CT;
 
 let passed = 0;
@@ -435,7 +435,7 @@ const rot4 = (bl, rot) => bl.map((b) => {
 const tee = (bl, cn = []) => CT.commitAutoTee(bl, cn, "S:B", "M");
 const allCoincide = (r) => r.connections.forEach((c) => {
   const a = CT.endpointOf(r.blocks, c.from), b = CT.endpointOf(r.blocks, c.to);
-  if (!c.id.startsWith("TE-A")) return;
+  if (!/^(TE|CX)-A/.test(c.id)) return;
   near(a.k.worldX, b.k.worldX, 0.02); near(a.k.worldY, b.k.worldY, 0.02);
 });
 
@@ -657,6 +657,128 @@ test("Reducer 的寬度由既有 validator 判定：不會出現 Width mismatch"
   const r = tee([TM({ width: 200 }), TS({ width: 100 })]);
   const v = CT.validateConnections(r.blocks, r.connections);
   assert.ok(v.every((x) => x.checks.filter((c) => c.name === "寬度匹配").every((c) => c.status === "Valid")));
+});
+
+console.log("Auto Cross (v5.4)");
+// Main：W300、x 0→2000（y=0）；上方 Branch S（朝下）與下方 Branch S2（朝上）交在 J=(1000,0)，t 皆 400
+const XS2 = (o) => TSbelow({ id: "S2", trayId: "BR2", ...o });
+const XM = () => TM();
+const cross = (bl, cn = [], a = "S:B", b = "S2:B") => CT.commitAutoCross(bl, cn, a, b, "M");
+const XX = (r) => r.blocks.find((b) => b.type === "cross");
+const xLayout = (o1, o2) => [XM(), TS(o1), XS2(o2)];
+
+test("標準十字：Main 拆成兩段 + Cross，兩條 Branch 修到 Cross:C / D，共 4 條新連接皆 Valid", () => {
+  const r = cross(xLayout());
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.proposal.type, "AUTO_CROSS");
+  assert.deepEqual(r.blocks.map((b) => b.type).sort(), ["cross", "straight", "straight", "straight", "straight"]);
+  assert.ok(!r.blocks.some((b) => b.id === "M"));
+  assert.equal(r.connections.length, 4);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+});
+test("長度：Cross 600×600；Main-L = Main-R = 700（700+600+700=2000）；兩條 Branch 800→900", () => {
+  const r = cross(xLayout());
+  const L = r.blocks.find((b) => b.id.startsWith("CL-A")), R = r.blocks.find((b) => b.id.startsWith("CR-A"));
+  near(XX(r).length, 600); near(L.length, 700); near(R.length, 700);
+  near(L.length + XX(r).length + R.length, 2000);
+  near(r.blocks.find((b) => b.id === "S").length, 900); near(r.blocks.find((b) => b.id === "S2").length, 900);
+});
+test("Cross A/B/C/D 四個端點與四條 Straight 端點精確重合", () => {
+  const r = cross(xLayout());
+  allCoincide(r);
+  const X = XX(r);
+  const at = (id) => X.connectors.find((k) => k.id === id);
+  near(at("A").worldX, 700); near(at("B").worldX, 1300);
+  near(at("C").worldY, -300); near(at("D").worldY, 300); // 上方 Branch 接 C（−y），下方接 D（+y）
+  assert.ok(r.connections.some((c) => [c.from, c.to].includes(`${X.id}:C`) && [c.from, c.to].includes("S:B")));
+  assert.ok(r.connections.some((c) => [c.from, c.to].includes(`${X.id}:D`) && [c.from, c.to].includes("S2:B")));
+});
+test("整體旋轉 0/90/180/270、傳入順序互換：皆成功、端點重合、全部 Valid", () => {
+  for (const rot of [0, 90, 180, 270]) {
+    for (const swap of [false, true]) {
+      const bl = rot4(xLayout(), rot);
+      const r = swap ? cross(bl, [], "S2:B", "S:B") : cross(bl);
+      assert.ok(r.ok, `rot=${rot} swap=${swap}: ${r.reason}`);
+      allCoincide(r);
+      assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+    }
+  }
+});
+test("Main 兩端既有連接（設備────Main────設備）：座標與連接保持", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000 });
+  const E2 = B("straight", { id: "E2", x: 2000, y: 0, length: 1000 });
+  const bl = [...xLayout(), E1, E2];
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }, { id: "c2", from: "M:B", to: "E2:A" }];
+  const r = cross(bl, cn);
+  assert.ok(r.ok, r.reason);
+  assert.equal(r.connections.length, 6);
+  const L = r.blocks.find((b) => b.id.startsWith("CL-A")), R = r.blocks.find((b) => b.id.startsWith("CR-A"));
+  near(L.connectors[0].worldX, 0); near(R.connectors[1].worldX, 2000);
+  assert.ok(CT.validateConnections(r.blocks, r.connections).every((v) => v.overall === "Valid"));
+  assert.equal(CT.buildGraph(r.blocks, r.connections).subgraphCount, 1);
+});
+test("任一 Branch occupied → fail", () => {
+  const Z = B("straight", { id: "Z", x: 1000, y: -400, length: 300, rotation: 270 });
+  const bl = [...xLayout(), Z];
+  assert.equal(cross(bl, [{ id: "c", from: "S:B", to: "Z:A" }]).ok, false);
+  const Z2 = B("straight", { id: "Z2", x: 1000, y: 400, length: 300, rotation: 90 });
+  assert.equal(cross([...xLayout(), Z2], [{ id: "c", from: "S2:B", to: "Z2:A" }]).ok, false);
+});
+test("兩條 Branch 不在同一交點 / 不互為反向 / 不是 90° → fail", () => {
+  assert.equal(cross(xLayout({}, { x: 1100 })).ok, false); // 交點錯開 100mm
+  assert.equal(cross([XM(), TS(), TS({ id: "S2", y: -2400, x: 1000 })]).ok, false); // 兩條都在上方、同向
+  assert.equal(cross(xLayout({}, { rotation: 275 })).ok, false); // 不是 90° 且不反向
+  assert.equal(cross(xLayout({ rotation: 80 })).ok, false);
+});
+test("System / FFL / Width 不一致 → fail", () => {
+  assert.equal(cross(xLayout({ system: "POWER" })).ok, false);
+  assert.equal(cross(xLayout({}, { elevation: 3200 })).ok, false);
+  assert.equal(cross(xLayout({}, { width: 150 })).ok, false);
+});
+test("交點太靠主線端點 / Branch 太短 / 朝向遠離 → fail，輸入完全不變", () => {
+  const cases = [
+    [XM(), TS({ x: 300 }), XS2({ x: 300 })],           // Main-L = 0
+    [XM(), TS({ y: -500, length: 150 }), XS2()],       // tip y=-350 → t=350，新長度 150+350−300 = 200 OK；改用更短
+    [XM(), TS({ y: -300, length: 120 }), XS2()],       // tip y=-180，t=180 → 120+180−300 < 100
+    [XM(), TS({ y: -1200, rotation: 270 }), XS2()],    // 朝上遠離
+  ];
+  const bad = [cases[0], cases[2], cases[3]];
+  bad.forEach((bl) => {
+    const snap = JSON.stringify([bl, []]);
+    assert.equal(cross(bl).ok, false);
+    assert.equal(JSON.stringify([bl, []]), snap);
+  });
+});
+test("Loop 不增加、subgraph 不惡化；成功時輸入不被修改", () => {
+  const bl = xLayout(); const snap = JSON.stringify([bl, []]);
+  const g1 = CT.buildGraph(bl, []);
+  const r = cross(bl);
+  const g2 = CT.buildGraph(r.blocks, r.connections);
+  assert.equal(g2.loopCount, 0); assert.ok(g2.subgraphCount <= g1.subgraphCount); assert.equal(g2.subgraphCount, 1);
+  assert.equal(JSON.stringify([bl, []]), snap);
+});
+test("第二次執行不會重複插 Cross（偵測為空、再次 commit 失敗）", () => {
+  const r = cross(xLayout());
+  assert.equal(CT.detectAutoCrosses(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(CT.detectAutoTees(r.blocks, r.connections).proposals.length, 0);
+  assert.equal(cross(r.blocks, r.connections).ok, false);
+});
+test("偵測：十字配置找到 1 個 Cross；範例資料沒有 Cross；Tee 偵測對兩條分支各找到 1 個", () => {
+  const bl = xLayout();
+  const found = CT.detectAutoCrosses(bl, []).proposals;
+  assert.equal(found.length, 1);
+  assert.deepEqual(found[0].sourceConnectors.slice().sort(), ["S2:B", "S:B"]);
+  assert.equal(CT.detectAutoTees(bl, []).proposals.length, 2);
+  assert.equal(CT.detectAutoCrosses(CT.sampleBlocks(), CT.sampleConnections()).proposals.length, 0);
+});
+test("Tee 與 Cross 可在同一專案接續套用（先 Cross，再對另一條 Main 插 Tee）", () => {
+  const M2 = TM({ id: "M2", trayId: "MAIN2", x: 0, y: 3000 });
+  const S3 = TS({ id: "S3", trayId: "BR3", y: 1800 }); // 朝下，端點 (1000,2600)，t=400
+  const r1 = cross([...xLayout(), M2, S3]);
+  assert.ok(r1.ok, r1.reason);
+  const r2 = CT.commitAutoTee(r1.blocks, r1.connections, "S3:B", "M2");
+  assert.ok(r2.ok, r2.reason);
+  assert.equal(CT.buildGraph(r2.blocks, r2.connections).loopCount, 0);
 });
 
 console.log("Export");

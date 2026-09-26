@@ -35,6 +35,48 @@
   const ANGLE_TOL = 0.1; // °
   const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
 
+  /** 分支 connector S 的朝外射線與主線 M 軸線的交點：t = S 端點到交點距離、s = 交點到 Main A 端的距離 */
+  CT.rayOnMain = function (S, M) {
+    const m = [Math.cos(CT.rad(M.rotation)), Math.sin(CT.rad(M.rotation))];
+    const uS = [Math.cos(CT.rad(S.k.worldDir)), Math.sin(CT.rad(S.k.worldDir))];
+    const d = [M.connectors[0].worldX - S.k.worldX, M.connectors[0].worldY - S.k.worldY];
+    const den = cross(uS, m);
+    return { m, uS, t: cross(d, m) / den, s: cross(d, uS) / den };
+  };
+
+  /**
+   * 把主線 M 在距 A 端 s 處、長 L 的空隙切開：回傳 Main-L / Main-R 兩個新元件，
+   * 以及「M 兩端既有連接改接到 Main-L:A / Main-R:B」所需的 removeConnections 與 replaces 連接。
+   * （Tee / Cross 共用；不修改輸入）
+   */
+  CT.splitMainPlan = function (M, connections, s, L, lId, rId, label) {
+    const r2 = CT.round2;
+    const h = L / 2;
+    const m = [Math.cos(CT.rad(M.rotation)), Math.sin(CT.rad(M.rotation))];
+    const J = [M.connectors[0].worldX + s * m[0], M.connectors[0].worldY + s * m[1]];
+    const left = { ...M, id: lId, trayId: `${M.trayId}-1`, length: r2(s - h), to: "", remark: `${label} 分割（左）` };
+    const right = {
+      ...M, id: rId, trayId: `${M.trayId}-2`, length: r2(M.length - s - h), from: "",
+      x: r2(J[0] + h * m[0]), y: r2(J[1] + h * m[1]), remark: `${label} 分割（右）`,
+    };
+    delete left.connectors; delete right.connectors;
+    const removeConnections = [];
+    const replaced = [];
+    [["A", lId], ["B", rId]].forEach(([end, newBlock]) => {
+      const oldKey = `${M.id}:${end}`;
+      const newKey = `${newBlock}:${end}`;
+      connections.filter((c) => c.from === oldKey || c.to === oldKey).forEach((c) => {
+        removeConnections.push(c.id);
+        replaced.push({
+          from: c.from === oldKey ? newKey : c.from,
+          to: c.to === oldKey ? newKey : c.to,
+          replaces: { id: c.id, oldKey, newKey },
+        });
+      });
+    });
+    return { left, right, J, m, removeConnections, replaced };
+  };
+
   CT.buildTeeProposal = function (blocks, connections, branchKey, mainId) {
     const S = CT.endpointOf(blocks, branchKey);
     const M = blocks.find((b) => b.id === mainId);
@@ -52,15 +94,10 @@
 
     if (Math.abs(CT.angleBetween(S.k.worldDir, M.rotation) - 90) >= ANGLE_TOL) return { ok: false, stage: "angle", reason: "分支與主線不是 90°" };
 
-    const m = [Math.cos(CT.rad(M.rotation)), Math.sin(CT.rad(M.rotation))];
-    const uS = [Math.cos(CT.rad(S.k.worldDir)), Math.sin(CT.rad(S.k.worldDir))];
     const pA = [M.connectors[0].worldX, M.connectors[0].worldY];
     const pB = [M.connectors[1].worldX, M.connectors[1].worldY];
     const pS = [S.k.worldX, S.k.worldY];
-    const den = cross(uS, m);
-    const d = [pA[0] - pS[0], pA[1] - pS[1]];
-    const t = cross(d, m) / den; // 分支端點到 J 的距離
-    const s = cross(d, uS) / den; // J 到 Main A 端的距離（沿主線）
+    const { m, uS, t, s } = CT.rayOnMain(S, M); // t：分支端點到 J 的距離；s：J 到 Main A 端的距離
     if (t < 0) return { ok: false, stage: "geom", reason: `分支朝向遠離主線（t=${t.toFixed(0)}）` };
     if (t > MAX_REACH) return { ok: false, stage: "geom", reason: `分支距離主線過遠（t=${t.toFixed(0)}, 上限 ${MAX_REACH}）` };
 
@@ -90,11 +127,8 @@
       ...M, id: teeId, trayId: `TEE-AUTO-${num}`, type: "tee", length: L,
       x: r2(J[0]), y: r2(J[1]), rotation: r2(rot), from: "", to: "", remark: "自動插入三通",
     };
-    const left = { ...M, id: lId, trayId: `${M.trayId}-1`, length: r2(lenL), to: "", remark: "Auto Tee 分割（左）" };
-    const right = {
-      ...M, id: rId, trayId: `${M.trayId}-2`, length: r2(lenR), from: "",
-      x: r2(J[0] + h * m[0]), y: r2(J[1] + h * m[1]), remark: "Auto Tee 分割（右）",
-    };
+    const split = CT.splitMainPlan(M, connections, s, L, lId, rId, "Auto Tee");
+    const { left, right } = split;
     // Reducer：A 端永遠是寬端。主線較寬 → A 接 Tee:C；分支較寬 → A 在分支側
     let reducer = null;
     if (needReducer) {
@@ -123,19 +157,8 @@
       addConnections.push({ from: `${teeId}:C`, to: branchKey });
     }
     // 原 Main 兩端既有的連接：改接到 Main-L:A / Main-R:B，座標不變
-    const removeConnections = [];
-    [["A", lId], ["B", rId]].forEach(([end, newBlock]) => {
-      const oldKey = `${M.id}:${end}`;
-      const newKey = `${newBlock}:${end}`;
-      connections.filter((c) => c.from === oldKey || c.to === oldKey).forEach((c) => {
-        removeConnections.push(c.id);
-        addConnections.push({
-          from: c.from === oldKey ? newKey : c.from,
-          to: c.to === oldKey ? newKey : c.to,
-          replaces: { id: c.id, oldKey, newKey },
-        });
-      });
-    });
+    const removeConnections = split.removeConnections;
+    addConnections.push(...split.replaced);
 
     return {
       ok: true,
