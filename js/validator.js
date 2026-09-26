@@ -2,7 +2,7 @@
  * validator.js — 外部 Connection 驗證
  *
  * 只比較「實際被接在一起的兩個 Connector」：
- *   占用 / 自迴路 / System / FFL / 端點有效寬 / 方向。
+ *   占用 / 自迴路 / System / FFL / Tray Height（兩側都有設定才比較）/ 端點有效寬 / 方向。
  * Reducer 本身是否合理（起終同寬）屬於元件內部檢查，見 CT.validateComponent。
  */
 (function (root) {
@@ -40,6 +40,14 @@
 
       if (A.elevation !== B.elevation) add("高程一致", "Warning", `FFL 不一致：+${A.elevation} vs +${B.elevation}`);
       else add("高程一致", "Valid", `FFL 一致 +${A.elevation}`);
+
+      // Tray Height（v5.9）：兩側都有設定才比較；任一未設定 → 不判定、不 Warning。
+      // 用 Warning 而非 Invalid：不同高度不一定不能接（可能有變高接頭 / 轉接件），
+      // 但目前模型沒有這類 fitting，所以只提示，不嘗試自動處理。
+      if (CT.hasHeight(A) && CT.hasHeight(B)) {
+        if (A.trayHeight !== B.trayHeight) add("高度一致", "Warning", `Tray Height 不一致：H${A.trayHeight} vs H${B.trayHeight}（目前沒有變高接頭 / 轉接件模型，僅提示）`);
+        else add("高度一致", "Valid", `Tray Height 一致 H${A.trayHeight}`);
+      }
 
       const wa = CT.effectiveWidth(A, ki);
       const wb = CT.effectiveWidth(B, kj);

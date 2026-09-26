@@ -1106,17 +1106,17 @@ test("Auto Elbow / Reducer / Cross 同樣依 Z 區間判斷", () => {
   assert.ok(hasCollision(cross(xbl(2750))));
   assert.ok(cross(xbl(2850)).ok);
 });
-test("Auto* 新元件繼承高度：Tee/Cross 與拆出的主線沿用 Main；Elbow / Reducer / Branch Reducer 取兩側較大者，任一未知則未知", () => {
+test("Auto* 新元件繼承高度：Tee/Cross 與拆出的主線沿用 Main；Elbow / Reducer / Branch Reducer 兩側相同則沿用、任一未知則未知（兩側高度不同會被 v5.9 的連接驗證擋下）", () => {
   const r = tee([TM({ trayHeight: 100 }), TS({ trayHeight: 100 })]);
   assert.ok(r.blocks.every((b) => b.trayHeight === 100));
-  const rr = tee([TM({ trayHeight: 100, width: 300 }), TS({ trayHeight: 150, width: 150 })]);
-  assert.equal(rr.blocks.find((b) => b.type === "reducer").trayHeight, 150);
+  const rr = tee([TM({ trayHeight: 100, width: 300 }), TS({ trayHeight: 100, width: 150 })]);
+  assert.equal(rr.blocks.find((b) => b.type === "reducer").trayHeight, 100);
   const un = tee([TM({ trayHeight: 100 }), TS({ width: 150 })]);
   assert.equal(un.blocks.find((b) => b.type === "reducer").trayHeight, null);
   const cr = cross(xLayout({ trayHeight: 100, width: 150 }, { trayHeight: 100 }).map((b) => (b.id === "M" ? CT.refresh({ ...b, trayHeight: 100 }) : b)));
   assert.ok(cr.ok, cr.reason);
   assert.equal(cr.blocks.find((b) => b.type === "cross").trayHeight, 100);
-  const red = CT.commitAutoReducer([RP({ trayHeight: 100 }), RQ({ trayHeight: 80 })], [], "P:B", "Q:A");
+  const red = CT.commitAutoReducer([RP({ trayHeight: 100 }), RQ({ trayHeight: 100 })], [], "P:B", "Q:A");
   assert.equal(red.blocks.find((b) => b.type === "reducer").trayHeight, 100);
   const el = CT.commitAutoElbow([B("straight", { id: "P", innerRadius: 150, length: 800, trayHeight: 100 }), B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400 })], [], "P:B", "Q:B");
   assert.equal(el.blocks.find((b) => b.type === "elbow90").trayHeight, null);
@@ -1136,6 +1136,78 @@ test("範例資料未設定 trayHeight，行為與 v5.7 完全相同（無重疊
   assert.equal(CT.detectAutoElbows(bl, cn).proposals.length, 1);
   assert.equal(CT.detectAutoReducers(bl, cn).proposals.length, 1);
   assert.equal(CT.detectAutoTees(bl, cn).proposals.length, 1);
+});
+
+console.log("Connection height consistency (v5.9)");
+const hv = (h1, h2) => {
+  const a = B("straight", { id: "A", x: 0, y: 0, length: 1000, trayHeight: h1 });
+  const b = B("straight", { id: "B", x: 1000, y: 0, length: 1000, trayHeight: h2 });
+  return CT.validateConnections([a, b], [{ id: "c", from: "A:B", to: "B:A" }])[0];
+};
+const heightCheck = (v) => v.checks.find((c) => c.name === "高度一致");
+
+test("兩側 trayHeight 都有值：相同 → Valid；不同 → Warning（不是 Invalid）", () => {
+  const same = hv(100, 100);
+  assert.equal(same.overall, "Valid"); assert.equal(heightCheck(same).status, "Valid");
+  const diff = hv(100, 150);
+  assert.equal(diff.overall, "Warning"); assert.equal(heightCheck(diff).status, "Warning");
+  assert.ok(heightCheck(diff).detail.includes("H100") && heightCheck(diff).detail.includes("H150"));
+});
+test("任一側未設定 → 不判定：沒有這項檢查，也不 Warning", () => {
+  [[100, null], [null, 150], [null, null], [100, 0], [0, 150]].forEach(([a, b]) => {
+    const v = hv(a, b);
+    assert.equal(heightCheck(v), undefined, `${a}/${b}`);
+    assert.equal(v.overall, "Valid", `${a}/${b}`);
+  });
+});
+test("與 FFL 是獨立的檢查：FFL 相同高度不同、FFL 不同高度相同，各自只觸發對應的 Warning", () => {
+  const mk = (e1, h1, e2, h2) => CT.validateConnections([
+    B("straight", { id: "A", x: 0, y: 0, length: 1000, elevation: e1, trayHeight: h1 }),
+    B("straight", { id: "B", x: 1000, y: 0, length: 1000, elevation: e2, trayHeight: h2 }),
+  ], [{ id: "c", from: "A:B", to: "B:A" }])[0];
+  const r1 = mk(2700, 100, 2700, 150), r2 = mk(2700, 100, 2800, 100);
+  assert.equal(heightCheck(r1).status, "Warning"); assert.equal(r1.checks.find((c) => c.name === "高程一致").status, "Valid");
+  assert.equal(heightCheck(r2).status, "Valid"); assert.equal(r2.checks.find((c) => c.name === "高程一致").status, "Warning");
+});
+test("Reducer 連接比較的是兩個 block 的 trayHeight（變徑本身只有單一高度，僅提示）", () => {
+  const P = B("straight", { id: "P", x: 0, y: 0, length: 1000, width: 300, trayHeight: 100 });
+  const R = B("reducer", { id: "R", x: 1000, y: 0, widthStart: 300, widthEnd: 200, trayHeight: 100 });
+  const Q = B("straight", { id: "Q", x: 1300, y: 0, length: 1000, width: 200, trayHeight: 150 });
+  const v = CT.validateConnections([P, R, Q], [{ id: "c1", from: "P:B", to: "R:A" }, { id: "c2", from: "R:B", to: "Q:A" }]);
+  assert.equal(v[0].overall, "Valid"); assert.equal(v[1].overall, "Warning");
+});
+test("Auto Elbow / Reducer / Tee / Cross：高度不一致 → 提案被擋（新連接必須 Valid）；一致或未設定 → 照常", () => {
+  const mkElbow = (h1, h2) => [B("straight", { id: "P", innerRadius: 150, length: 800, trayHeight: h1 }), B("straight", { id: "Q", innerRadius: 150, x: 1000, y: 1600, rotation: 270, length: 400, trayHeight: h2 })];
+  assert.ok(CT.commitAutoElbow(mkElbow(100, 100), [], "P:B", "Q:B").ok);
+  assert.ok(CT.commitAutoElbow(mkElbow(100, null), [], "P:B", "Q:B").ok);
+  const be = CT.commitAutoElbow(mkElbow(100, 150), [], "P:B", "Q:B");
+  assert.equal(be.ok, false); assert.ok(be.reason.includes("Tray Height"));
+  assert.ok(CT.commitAutoReducer([RP({ trayHeight: 100 }), RQ({ trayHeight: 100 })], [], "P:B", "Q:A").ok);
+  assert.equal(CT.commitAutoReducer([RP({ trayHeight: 100 }), RQ({ trayHeight: 150 })], [], "P:B", "Q:A").ok, false);
+  assert.ok(tee([TM({ trayHeight: 100 }), TS({ trayHeight: 100 })]).ok);
+  assert.equal(tee([TM({ trayHeight: 100 }), TS({ trayHeight: 150 })]).ok, false);
+  assert.ok(cross([TM({ trayHeight: 100 }), TS({ trayHeight: 100 }), XS2({ trayHeight: 100 })]).ok);
+  assert.equal(cross([TM({ trayHeight: 100 }), TS({ trayHeight: 100 }), XS2({ trayHeight: 150 })]).ok, false);
+});
+test("失敗時輸入完全不變；偵測清單不會出現高度不一致的提案", () => {
+  const bl = [TM({ trayHeight: 100 }), TS({ trayHeight: 150 })]; const snap = JSON.stringify([bl, []]);
+  assert.equal(tee(bl).ok, false);
+  assert.equal(JSON.stringify([bl, []]), snap);
+  assert.equal(CT.detectAutoTees(bl, []).proposals.length, 0);
+});
+test("既有連接原本就有高度 Warning：Tee 替換該連接不變差即可（不會因此永遠不能插）", () => {
+  const E1 = B("straight", { id: "E1", x: -1000, y: 0, length: 1000, trayHeight: 150 });
+  const bl = [TM({ trayHeight: 100 }), TS({ trayHeight: 100 }), E1];
+  const cn = [{ id: "c1", from: "E1:B", to: "M:A" }];
+  assert.equal(CT.validateConnections(bl, cn)[0].overall, "Warning");
+  const r = tee(bl, cn);
+  assert.ok(r.ok, r.reason);
+  assert.equal(CT.validateConnections(r.blocks, r.connections).filter((v) => v.overall === "Warning").length, 1);
+});
+test("範例資料沒有設定高度：驗證結果與 v5.8 完全相同", () => {
+  const v = CT.validateConnections(CT.sampleBlocks(), CT.sampleConnections());
+  assert.ok(v.every((x) => !heightCheck(x)));
+  assert.deepEqual(v.map((x) => x.overall), ["Warning", "Warning", "Warning", "Valid"]);
 });
 
 console.log("Export");
